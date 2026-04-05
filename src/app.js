@@ -27,6 +27,36 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Debug Supabase Connection
+app.get('/debug-supabase', async (req, res) => {
+  try {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_KEY;
+    
+    if (!url || !key) {
+      return res.json({ 
+        status: '❌ Missing Env Vars', 
+        url_present: !!url, 
+        key_present: !!key 
+      });
+    }
+
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(url, key);
+    const { error } = await supabase.from('campaigns').select('count', { count: 'exact', head: true });
+    
+    return res.json({
+      status: error ? '❌ Supabase Error' : '✅ Success',
+      error_message: error ? error.message : null,
+      masked_url: url.substring(0, 15) + '...',
+      masked_key: key.substring(0, 10) + '...' + key.substring(key.length - 4),
+      key_length: key.length
+    });
+  } catch (err) {
+    return res.json({ status: '❌ Crash', error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
