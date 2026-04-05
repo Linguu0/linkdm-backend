@@ -33,6 +33,7 @@ app.use((req, _res, next) => {
 app.use('/auth', authRoutes);
 app.use('/webhook', webhookRoutes);
 app.use('/campaigns', campaignRoutes);
+app.use('/posts', campaignRoutes);
 app.use('/analytics', analyticsRoutes);
 
 // Health check

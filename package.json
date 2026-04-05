@@ -2,6 +2,9 @@
   "name": "linkdm-backend",
   "version": "1.0.0",
   "description": "LinkDM — Instagram comment to auto-DM system backend",
+  "engines": {
+    "node": "24.x"
+  },
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",

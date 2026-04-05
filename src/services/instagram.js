@@ -8,18 +8,36 @@ const API_URL = 'https://api.instagram.com';
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} recipientId – IGSID of the recipient
- * @param {string} messageText – The DM body
+ * @param {string} messageContent – The DM body or URL
+ * @param {string} type – The type of message ('text', 'link', 'pdf')
  * @returns {object} API response data
  */
-async function sendDirectMessage(accessToken, recipientId, messageText) {
+async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link') {
   const url = `${GRAPH_URL}/me/messages`;
+
+  let messagePayload;
+
+  if (type === 'pdf') {
+    messagePayload = {
+      attachment: {
+        type: 'file',
+        payload: {
+          url: messageContent,
+          is_compressible: true,
+        },
+      },
+    };
+  } else {
+    // text or link
+    messagePayload = { text: messageContent };
+  }
 
   const payload = {
     recipient: { id: recipientId },
-    message: { text: messageText },
+    message: messagePayload,
   };
 
-  console.log(`📩 Sending DM to ${recipientId}...`);
+  console.log(`📩 Sending ${type} DM to ${recipientId}...`);
 
   const response = await axios.post(url, payload, {
     headers: {
@@ -28,7 +46,7 @@ async function sendDirectMessage(accessToken, recipientId, messageText) {
     },
   });
 
-  console.log(`✅ DM sent successfully to ${recipientId}`);
+  console.log(`✅ ${type} DM sent successfully to ${recipientId}`);
   return response.data;
 }
 

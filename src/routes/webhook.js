@@ -101,8 +101,18 @@ router.post('/instagram', async (req, res) => {
 
         const accessToken = userData.access_token;
 
-        // 3. Check each campaign for keyword match
+        // 3. Check each campaign for target + keyword match
         for (const campaign of campaigns) {
+          // Filter by target post if campaign targets a specific post
+          if (campaign.target_type === 'specific_post' && campaign.target_media_id) {
+            if (mediaId !== campaign.target_media_id) {
+              console.log(
+                `⏭️  Skipping campaign "${campaign.name}" — target media ${campaign.target_media_id} ≠ ${mediaId}`
+              );
+              continue;
+            }
+          }
+
           if (!matchesKeyword(commentText, campaign.keyword)) {
             console.log(
               `❌ No match: "${commentText}" vs keyword "${campaign.keyword}"`
@@ -138,6 +148,7 @@ router.post('/instagram', async (req, res) => {
           await enqueueDM({
             commenterId,
             dmMessage: campaign.dm_message,
+            type: campaign.type || 'link',
             campaignId: campaign.id,
             accessToken,
           });

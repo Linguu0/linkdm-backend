@@ -42,18 +42,19 @@ console.log('✅ Bull DM queue initialized');
 // Processor — runs for each job
 // ---------------------------------------------------------------------------
 dmQueue.process(async (job) => {
-  const { commenterId, dmMessage, campaignId, accessToken } = job.data;
+  const { commenterId, dmMessage, type, campaignId, accessToken } = job.data;
 
-  console.log(`⚙️  Processing DM job ${job.id} → commenter ${commenterId}`);
+  console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
   // 1. Send the DM via Instagram Graph API
-  await sendDirectMessage(accessToken, commenterId, dmMessage);
+  await sendDirectMessage(accessToken, commenterId, dmMessage, type);
 
   // 2. Log to dm_logs table
   const { error } = await supabase.from('dm_logs').insert({
     campaign_id: campaignId,
     commenter_id: commenterId,
     dm_message: dmMessage,
+    type: type || 'link',
     sent_at: new Date().toISOString(),
   });
 
@@ -79,15 +80,16 @@ dmQueue.on('completed', (job) => {
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
-async function enqueueDM({ commenterId, dmMessage, campaignId, accessToken }) {
+async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken }) {
   const job = await dmQueue.add({
     commenterId,
     dmMessage,
+    type,
     campaignId,
     accessToken,
   });
 
-  console.log(`📥 Enqueued DM job ${job.id} for commenter ${commenterId}`);
+  console.log(`📥 Enqueued ${type || 'link'} DM job ${job.id} for commenter ${commenterId}`);
   return job;
 }
 
