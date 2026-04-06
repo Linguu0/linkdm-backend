@@ -95,12 +95,18 @@ router.post('/instagram', async (req, res) => {
           .eq('ig_user_id', igUserId)
           .single();
 
+        let accessToken;
         if (userError || !userData) {
-          console.error('❌ Could not find user token for', igUserId);
-          continue;
+          if (process.env.ACCESS_TOKEN) {
+            console.log(`ℹ️ Falling back to ENV ACCESS_TOKEN for ${igUserId}`);
+            accessToken = process.env.ACCESS_TOKEN;
+          } else {
+            console.error('❌ Could not find user token for', igUserId);
+            continue;
+          }
+        } else {
+          accessToken = userData.access_token;
         }
-
-        const accessToken = userData.access_token;
 
         // 3. Check each campaign for target + keyword match
         for (const campaign of campaigns) {
