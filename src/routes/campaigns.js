@@ -49,6 +49,7 @@ router.post('/', async (req, res) => {
       exclude_keywords,
       send_once_per_user,
       exclude_mentions,
+      auto_comment_reply,
     } = req.body;
 
     const userId = ig_user_id || process.env.IG_USER_ID;
@@ -101,6 +102,7 @@ router.post('/', async (req, res) => {
       exclude_keywords: exclude_keywords || null,
       send_once_per_user: send_once_per_user !== undefined ? send_once_per_user : true,
       exclude_mentions: exclude_mentions !== undefined ? exclude_mentions : false,
+      auto_comment_reply: auto_comment_reply !== undefined ? auto_comment_reply : true,
     };
 
     const { data, error } = await supabase

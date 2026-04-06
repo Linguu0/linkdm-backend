@@ -1,6 +1,6 @@
 const Queue = require('bull');
 const IORedis = require('ioredis');
-const { sendDirectMessage } = require('./instagram');
+const { sendDirectMessage, replyToComment } = require('./instagram');
 const supabase = require('../db/supabase');
 
 // ---------------------------------------------------------------------------
@@ -42,12 +42,22 @@ console.log('✅ Bull DM queue initialized');
 // Processor — runs for each job
 // ---------------------------------------------------------------------------
 dmQueue.process(async (job) => {
-  const { commenterId, dmMessage, type, campaignId, accessToken } = job.data;
+  const { commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId } = job.data;
 
   console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
   // 1. Send the DM via Instagram Graph API
   await sendDirectMessage(accessToken, commenterId, dmMessage, type);
+
+  // 1.5 Auto Reply to comment if enabled
+  if (autoReply && commentId) {
+    try {
+      await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+    } catch (err) {
+      console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.message);
+      // We don't throw here to avoid retrying the DM just because the comment reply failed.
+    }
+  }
 
   // 2. Log to dm_logs table
   const { error } = await supabase.from('dm_logs').insert({
@@ -80,13 +90,15 @@ dmQueue.on('completed', (job) => {
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
-async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken }) {
+async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId }) {
   const job = await dmQueue.add({
     commenterId,
     dmMessage,
     type,
     campaignId,
     accessToken,
+    autoReply,
+    commentId,
   });
 
   console.log(`📥 Enqueued ${type || 'link'} DM job ${job.id} for commenter ${commenterId}`);

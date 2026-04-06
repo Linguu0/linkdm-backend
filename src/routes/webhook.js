@@ -58,10 +58,11 @@ router.post('/instagram', async (req, res) => {
 
         const value = change.value;
         const commenterId = value.from?.id;
+        const commentId = value.id;
         const commentText = value.text;
         const mediaId = value.media?.id;
 
-        if (!commenterId || !commentText) {
+        if (!commenterId || !commentText || !commentId) {
           console.log('⚠️  Missing commenter or text, skipping');
           continue;
         }
@@ -151,6 +152,8 @@ router.post('/instagram', async (req, res) => {
             type: campaign.type || 'link',
             campaignId: campaign.id,
             accessToken,
+            commentId,
+            autoReply: campaign.auto_comment_reply || false,
           });
         }
       }

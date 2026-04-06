@@ -97,8 +97,29 @@ async function exchangeForLongLivedToken(shortLivedToken) {
   return response.data; // { access_token, token_type, expires_in }
 }
 
+async function replyToComment(accessToken, commentId, messageText) {
+  const url = `${GRAPH_URL}/${commentId}/replies`;
+
+  const payload = {
+    message: messageText,
+  };
+
+  console.log(`💬 Replying to comment ${commentId}...`);
+
+  const response = await axios.post(url, payload, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  console.log(`✅ Reply sent successfully to comment ${commentId}`);
+  return response.data;
+}
+
 module.exports = {
   sendDirectMessage,
   exchangeCodeForToken,
   exchangeForLongLivedToken,
+  replyToComment,
 };
