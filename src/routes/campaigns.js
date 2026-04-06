@@ -84,13 +84,12 @@ router.post('/', async (req, res) => {
     }
 
     // Build payload matching actual DB columns:
-    // id, access_token, ig_user_id, trigger_keyword, name, keyword,
+    // id (auto), access_token, ig_user_id, name, keyword,
     // dm_message, is_active, created_at, dm_type, button_template_data,
     // quick_replies_data, exclude_keywords, send_once_per_user, exclude_mentions
     const payload = {
       access_token: accessToken,
       ig_user_id: userId,
-      trigger_keyword: triggerKw || 'LINK',
       name,
       keyword: keywordValue,
       dm_message,
