@@ -46,34 +46,52 @@ dmQueue.process(async (job) => {
 
   console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
+  let dmSuccess = true;
+  let dmErrorMsg = null;
+
   // 1. Send the DM via Instagram Graph API
-  await sendDirectMessage(accessToken, commenterId, dmMessage, type);
+  try {
+    await sendDirectMessage(accessToken, commenterId, dmMessage, type);
+  } catch (err) {
+    dmSuccess = false;
+    dmErrorMsg = err.response?.data?.error?.message || err.message;
+    console.warn(`⚠️ Failed to send DM to ${commenterId}:`, dmErrorMsg);
+    console.warn("If you are testing from your own account, Instagram does not allow sending DMs to yourself.");
+  }
 
   // 1.5 Auto Reply to comment if enabled
   if (autoReply && commentId) {
     try {
+      // Small delay just to act natural if we also sent a DM
+      await new Promise(res => setTimeout(res, 1000));
       await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
     } catch (err) {
-      console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.message);
-      // We don't throw here to avoid retrying the DM just because the comment reply failed.
+      console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.response?.data?.error?.message || err.message);
     }
   }
 
-  // 2. Log to dm_logs table
+  // 2. Log to dm_logs table (even if DM failed, we want to know it attempted and the status)
+  const logMessage = dmSuccess ? dmMessage : `FAILED: ${dmErrorMsg}`;
   const { error } = await supabase.from('dm_logs').insert({
     campaign_id: campaignId,
     commenter_id: commenterId,
-    dm_message: dmMessage,
+    dm_message: logMessage,
     type: type || 'link',
     sent_at: new Date().toISOString(),
   });
 
   if (error) {
     console.error('❌ Failed to insert dm_log:', error.message);
-    throw error; // triggers retry
+    // Don't throw to retry, as we already attempted the DM. Just finish job.
   }
 
-  console.log(`✅ DM logged for commenter ${commenterId}, campaign ${campaignId}`);
+  if (dmSuccess) {
+    console.log(`✅ DM logged successfully for commenter ${commenterId}`);
+  } else {
+    // If we want Bull to record it as failed, we can throw here after logging to DB
+    // but typically we don't want to retry 400 Bad Requests indefinitely.
+    console.log(`❌ DM failed for commenter ${commenterId}, but logged attempt.`);
+  }
 });
 
 // ---------------------------------------------------------------------------
