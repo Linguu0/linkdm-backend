@@ -42,11 +42,6 @@ router.post('/', async (req, res) => {
       keyword,
       trigger_keyword,
       dm_message,
-      type,
-      trigger_type,
-      auto_comment_reply,
-      target_type,
-      target_media_id,
       ig_user_id,
       dm_type,
       button_template_data,
@@ -66,6 +61,9 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Store trigger_keyword as first keyword (string)
+    const triggerKw = Array.isArray(keywordValue) ? keywordValue[0] : keywordValue.split(',')[0]?.trim();
+
     // Normalize keyword to array for JSONB storage
     if (typeof keywordValue === 'string') {
       keywordValue = keywordValue.split(',').map((k) => k.toLowerCase().trim()).filter(Boolean);
@@ -73,27 +71,42 @@ router.post('/', async (req, res) => {
       keywordValue = keywordValue.map((k) => k.toLowerCase().trim()).filter(Boolean);
     }
 
+    // Get access token — required by DB schema
+    let accessToken = process.env.ACCESS_TOKEN || '';
+    if (!accessToken) {
+      // Try to get from users table
+      const { data: userData } = await supabase
+        .from('users')
+        .select('access_token')
+        .eq('ig_user_id', userId)
+        .single();
+      accessToken = userData?.access_token || 'pending';
+    }
+
+    // Build payload matching actual DB columns:
+    // id, access_token, ig_user_id, trigger_keyword, name, keyword,
+    // dm_message, is_active, created_at, dm_type, button_template_data,
+    // quick_replies_data, exclude_keywords, send_once_per_user, exclude_mentions
+    const payload = {
+      access_token: accessToken,
+      ig_user_id: userId,
+      trigger_keyword: triggerKw || 'LINK',
+      name,
+      keyword: keywordValue,
+      dm_message,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      dm_type: dm_type || 'text_message',
+      button_template_data: button_template_data || null,
+      quick_replies_data: quick_replies_data || null,
+      exclude_keywords: exclude_keywords || null,
+      send_once_per_user: send_once_per_user !== undefined ? send_once_per_user : true,
+      exclude_mentions: exclude_mentions !== undefined ? exclude_mentions : false,
+    };
+
     const { data, error } = await supabase
       .from('campaigns')
-      .insert({
-        ig_user_id: userId,
-        name,
-        keyword: keywordValue,
-        dm_message,
-        type: type || 'link',
-        trigger_type: trigger_type || 'reel_comment',
-        auto_comment_reply: auto_comment_reply !== undefined ? auto_comment_reply : true,
-        target_type: target_type || 'all_posts',
-        target_media_id: target_type === 'specific_post' ? (target_media_id || null) : null,
-        dm_type: dm_type || 'text_message',
-        button_template_data: button_template_data || null,
-        quick_replies_data: quick_replies_data || null,
-        exclude_keywords: exclude_keywords || null,
-        send_once_per_user: send_once_per_user !== undefined ? send_once_per_user : true,
-        exclude_mentions: exclude_mentions !== undefined ? exclude_mentions : false,
-        is_active: true,
-        created_at: new Date().toISOString(),
-      })
+      .insert(payload)
       .select();
 
     if (error) {

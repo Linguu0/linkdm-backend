@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
+const { runMigrations } = require('./db/migrate');
 
 // ---------------------------------------------------------------------------
 // Express App
@@ -62,19 +63,30 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log('');
-    console.log('═══════════════════════════════════════════');
-    console.log(`  🚀 LinkDM Backend running on port ${PORT}`);
-    console.log('═══════════════════════════════════════════');
-    console.log(`  📌 Health:     http://localhost:${PORT}/`);
-    console.log(`  🔐 Auth:       http://localhost:${PORT}/auth/instagram`);
-    console.log(`  🔔 Webhook:    http://localhost:${PORT}/webhook/instagram`);
-    console.log(`  📋 Campaigns:  http://localhost:${PORT}/campaigns`);
-    console.log(`  📊 Analytics:  http://localhost:${PORT}/analytics`);
-    console.log('═══════════════════════════════════════════');
-    console.log('');
-  });
+  // Run migrations before starting the server
+  runMigrations()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log('');
+        console.log('═══════════════════════════════════════════');
+        console.log(`  🚀 LinkDM Backend running on port ${PORT}`);
+        console.log('═══════════════════════════════════════════');
+        console.log(`  📌 Health:     http://localhost:${PORT}/`);
+        console.log(`  🔐 Auth:       http://localhost:${PORT}/auth/instagram`);
+        console.log(`  🔔 Webhook:    http://localhost:${PORT}/webhook/instagram`);
+        console.log(`  📋 Campaigns:  http://localhost:${PORT}/campaigns`);
+        console.log(`  📊 Analytics:  http://localhost:${PORT}/analytics`);
+        console.log('═══════════════════════════════════════════');
+        console.log('');
+      });
+    })
+    .catch((err) => {
+      console.error('💥 Failed to run migrations:', err.message);
+      // Start anyway — the fallback in campaigns route will handle it
+      app.listen(PORT, () => {
+        console.log(`  🚀 LinkDM Backend running on port ${PORT} (migrations skipped)`);
+      });
+    });
 }
 
 // Export for Vercel Serverless
