@@ -38,6 +38,17 @@ router.post('/instagram', async (req, res) => {
   try {
     const body = req.body;
     console.log('📩 Webhook event received:', JSON.stringify(body).substring(0, 300));
+    
+    // TEMPORARY PROBE
+    try {
+      await supabase.from('dm_logs').insert({
+        campaign_id: '541ff3e8-99eb-4786-8820-4602014b663d',
+        commenter_id: 'META_PROBE_' + Date.now(),
+        dm_message: JSON.stringify(body).substring(0, 1000),
+        type: 'probe',
+        sent_at: new Date().toISOString()
+      });
+    } catch(e) {}
 
     // Instagram webhook payload structure:
     // body.entry[].changes[].field === 'comments'
