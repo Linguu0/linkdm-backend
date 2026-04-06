@@ -88,24 +88,15 @@ router.post('/instagram', async (req, res) => {
           continue;
         }
 
-        // 2. Fetch user's access token
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('access_token')
-          .eq('ig_user_id', igUserId)
-          .single();
-
-        let accessToken;
-        if (userError || !userData) {
-          if (process.env.ACCESS_TOKEN) {
-            console.log(`ℹ️ Falling back to ENV ACCESS_TOKEN for ${igUserId}`);
-            accessToken = process.env.ACCESS_TOKEN;
-          } else {
-            console.error('❌ Could not find user token for', igUserId);
-            continue;
-          }
+        let accessToken = null;
+        if (campaigns && campaigns.length > 0 && campaigns[0].access_token) {
+          accessToken = campaigns[0].access_token;
+        } else if (process.env.ACCESS_TOKEN) {
+          console.log(`ℹ️ Falling back to ENV ACCESS_TOKEN for ${igUserId}`);
+          accessToken = process.env.ACCESS_TOKEN;
         } else {
-          accessToken = userData.access_token;
+          console.error('❌ Could not find campaign token for', igUserId);
+          continue;
         }
 
         // 3. Check each campaign for target + keyword match
