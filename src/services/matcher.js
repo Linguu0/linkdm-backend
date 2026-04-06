@@ -16,9 +16,30 @@ function matchesKeyword(commentText, keyword) {
   if (!commentText || !keyword) return false;
 
   const normalizedComment = commentText.toLowerCase().trim();
-  const normalizedKeyword = keyword.toLowerCase().trim();
 
-  return normalizedComment.includes(normalizedKeyword);
+  let keywordArray = [];
+  if (Array.isArray(keyword)) {
+    keywordArray = keyword;
+  } else if (typeof keyword === 'string') {
+    try {
+      const parsed = JSON.parse(keyword);
+      if (Array.isArray(parsed)) {
+        keywordArray = parsed;
+      } else {
+        keywordArray = [keyword];
+      }
+    } catch (e) {
+      keywordArray = [keyword];
+    }
+  }
+
+  for (const kw of keywordArray) {
+    if (typeof kw === 'string' && normalizedComment.includes(kw.toLowerCase().trim())) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 module.exports = { matchesKeyword };
