@@ -51,7 +51,7 @@ dmQueue.process(async (job) => {
 
   // 1. Send the DM via Instagram Graph API
   try {
-    await sendDirectMessage(accessToken, commenterId, dmMessage, type);
+    await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
   } catch (err) {
     dmSuccess = false;
     dmErrorMsg = err.response?.data?.error?.message || err.message;

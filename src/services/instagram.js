@@ -12,7 +12,7 @@ const API_URL = 'https://api.instagram.com';
  * @param {string} type – The type of message ('text', 'link', 'pdf')
  * @returns {object} API response data
  */
-async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link') {
+async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link', commentId = null) {
   const url = `${GRAPH_URL}/me/messages`;
 
   let messagePayload;
@@ -32,12 +32,14 @@ async function sendDirectMessage(accessToken, recipientId, messageContent, type 
     messagePayload = { text: messageContent };
   }
 
+  const recipientPayload = commentId ? { comment_id: commentId } : { id: recipientId };
+
   const payload = {
-    recipient: { id: recipientId },
+    recipient: recipientPayload,
     message: messagePayload,
   };
 
-  console.log(`📩 Sending ${type} DM to ${recipientId}...`);
+  console.log(`📩 Sending ${type} DM to ${commentId ? 'comment ' + commentId : recipientId}...`);
 
   const response = await axios.post(url, payload, {
     headers: {
