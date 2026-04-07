@@ -134,24 +134,27 @@ router.post('/instagram', async (req, res) => {
           );
 
           // 4. Check dm_logs — skip if we already DMed this person for this campaign
-          const { data: existingLogs, error: logError } = await supabase
-            .from('dm_logs')
-            .select('id')
-            .eq('campaign_id', campaign.id)
-            .eq('commenter_id', commenterId)
-            .limit(1);
+          let shouldSkip = false;
+          if (campaign.send_once_per_user !== false) {
+            const { data: existingLogs, error: logError } = await supabase
+              .from('dm_logs')
+              .select('id')
+              .eq('campaign_id', campaign.id)
+              .eq('commenter_id', commenterId)
+              .limit(1);
 
-          if (logError) {
-            console.error('❌ Error checking dm_logs:', logError.message);
-            continue;
+            if (logError) {
+              console.error('❌ Error checking dm_logs:', logError.message);
+              continue;
+            }
+
+            if (existingLogs && existingLogs.length > 0) {
+              console.log(`⏭️  Already sent DM to ${commenterId} for campaign ${campaign.id}, skipping`);
+              shouldSkip = true;
+            }
           }
 
-          if (existingLogs && existingLogs.length > 0) {
-            console.log(
-              `⏭️  Already sent DM to ${commenterId} for campaign ${campaign.id}, skipping`
-            );
-            continue;
-          }
+          if (shouldSkip) continue;
 
           // 5. Enqueue the DM
           await enqueueDM({
