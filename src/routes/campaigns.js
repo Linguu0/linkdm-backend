@@ -103,6 +103,9 @@ router.post('/', async (req, res) => {
       send_once_per_user: send_once_per_user !== undefined ? send_once_per_user : true,
       exclude_mentions: exclude_mentions !== undefined ? exclude_mentions : false,
       auto_comment_reply: auto_comment_reply !== undefined ? auto_comment_reply : true,
+      target_type: req.body.target_type || 'all_posts',
+      target_media_id: req.body.target_media_id || null,
+      target_thumbnail: req.body.target_thumbnail || null,
     };
 
     const { data, error } = await supabase
