@@ -16,7 +16,11 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'https://linkdm-frontend.vercel.app'
+  ].filter(Boolean),
   credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));
