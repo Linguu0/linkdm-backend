@@ -19,7 +19,8 @@ app.use(cors({
   origin: [
     process.env.FRONTEND_URL,
     'http://localhost:5173',
-    'https://linkdm-frontend.vercel.app'
+    'https://linkdm-frontend.vercel.app',
+    /\.vercel\.app$/ // Allow all Vercel subdomains
   ].filter(Boolean),
   credentials: true,
 }));
@@ -67,30 +68,26 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
-  // Run migrations before starting the server
-  runMigrations()
-    .then(() => {
-      app.listen(PORT, '0.0.0.0', () => {
-        console.log('');
-        console.log('═══════════════════════════════════════════');
-        console.log(`  🚀 LinkDM Backend running on port ${PORT}`);
-        console.log('═══════════════════════════════════════════');
-        console.log(`  📌 Health:     http://localhost:${PORT}/`);
-        console.log(`  🔐 Auth:       http://localhost:${PORT}/auth/instagram`);
-        console.log(`  🔔 Webhook:    http://localhost:${PORT}/webhook/instagram`);
-        console.log(`  📋 Campaigns:  http://localhost:${PORT}/campaigns`);
-        console.log(`  📊 Analytics:  http://localhost:${PORT}/analytics`);
-        console.log('═══════════════════════════════════════════');
-        console.log('');
-      });
-    })
-    .catch((err) => {
-      console.error('💥 Failed to run migrations:', err.message);
-      // Start anyway — the fallback in campaigns route will handle it
-      app.listen(PORT, () => {
-        console.log(`  🚀 LinkDM Backend running on port ${PORT} (migrations skipped)`);
-      });
+  // START SERVER IMMEDIATELY — This is critical to avoid 521 errors on Render
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log('');
+    console.log('═══════════════════════════════════════════');
+    console.log(`  🚀 LinkDM Backend is LIVE on port ${PORT}`);
+    console.log('═══════════════════════════════════════════');
+    
+    // Trigger migrations in the background
+    runMigrations().then(() => {
+      console.log('✅ Background: Database migrations checked');
+    }).catch(err => {
+      console.error('⚠️  Background: Migration warning:', err.message);
     });
+  });
+
+  // Handle server errors (like EADDRINUSE)
+  server.on('error', (err) => {
+    console.error('💥 Server startup error:', err.message);
+    process.exit(1);
+  });
 }
 
 // Export for Vercel Serverless
