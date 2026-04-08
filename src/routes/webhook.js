@@ -39,16 +39,7 @@ router.post('/instagram', async (req, res) => {
     const body = req.body;
     console.log('📩 Webhook event received:', JSON.stringify(body).substring(0, 300));
     
-    // TEMPORARY PROBE
-    try {
-      await supabase.from('dm_logs').insert({
-        campaign_id: '541ff3e8-99eb-4786-8820-4602014b663d',
-        commenter_id: 'META_PROBE_' + Date.now(),
-        dm_message: JSON.stringify(body).substring(0, 1000),
-        type: 'probe',
-        sent_at: new Date().toISOString()
-      });
-    } catch(e) {}
+
 
     // Instagram webhook payload structure:
     // body.entry[].changes[].field === 'comments'
@@ -99,14 +90,14 @@ router.post('/instagram', async (req, res) => {
           continue;
         }
 
-        let accessToken = null;
-        if (campaigns && campaigns.length > 0 && campaigns[0].access_token) {
+        // 2. Resolve access token — prefer fresh ENV token over stale DB token
+        let accessToken = process.env.ACCESS_TOKEN;
+        if (!accessToken && campaigns.length > 0 && campaigns[0].access_token) {
+          console.log(`ℹ️ Using campaign DB token for ${igUserId}`);
           accessToken = campaigns[0].access_token;
-        } else if (process.env.ACCESS_TOKEN) {
-          console.log(`ℹ️ Falling back to ENV ACCESS_TOKEN for ${igUserId}`);
-          accessToken = process.env.ACCESS_TOKEN;
-        } else {
-          console.error('❌ Could not find campaign token for', igUserId);
+        }
+        if (!accessToken) {
+          console.error('❌ No access token available for', igUserId);
           continue;
         }
 

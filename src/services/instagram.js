@@ -1,6 +1,7 @@
 const axios = require('axios');
 
-const GRAPH_URL = 'https://graph.instagram.com/v18.0';
+const GRAPH_URL = 'https://graph.instagram.com/v21.0';
+const FB_GRAPH_URL = 'https://graph.facebook.com/v21.0';
 const API_URL = 'https://api.instagram.com';
 
 /**
@@ -13,7 +14,7 @@ const API_URL = 'https://api.instagram.com';
  * @returns {object} API response data
  */
 async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link', commentId = null) {
-  const url = `${GRAPH_URL}/me/messages`;
+  const url = `${FB_GRAPH_URL}/me/messages`;
 
   let messagePayload;
 

@@ -300,7 +300,7 @@ router.get('/media', async (req, res) => {
     }
 
     // Call Instagram Graph API
-    const igUrl = `https://graph.instagram.com/v18.0/me/media?fields=id,caption,media_type,thumbnail_url,media_url,timestamp,permalink&limit=50&access_token=${accessToken}`;
+    const igUrl = `https://graph.instagram.com/v21.0/me/media?fields=id,caption,media_type,thumbnail_url,media_url,timestamp,permalink&limit=50&access_token=${accessToken}`;
     
     console.log(`🌍 Calling Instagram API: ${igUrl.replace(accessToken, '[HIDDEN_TOKEN]')}`);
     

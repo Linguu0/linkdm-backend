@@ -38,6 +38,11 @@ const dmQueue = new Queue('dm-queue', {
 
 console.log('✅ Bull DM queue initialized');
 
+// Health check events
+dmQueue.on('ready', () => console.log('✅ Bull queue READY — actively consuming jobs'));
+dmQueue.on('error', (err) => console.error('❌ Bull queue connection ERROR:', err.message));
+dmQueue.on('stalled', (job) => console.warn('⚠️ Job stalled:', job.id));
+
 // ---------------------------------------------------------------------------
 // Processor — runs for each job
 // ---------------------------------------------------------------------------
