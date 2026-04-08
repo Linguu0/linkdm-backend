@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const router = express.Router();
 const supabase = require('../db/supabase');
 
@@ -304,15 +305,8 @@ router.get('/media', async (req, res) => {
     
     console.log(`🌍 Calling Instagram API: ${igUrl.replace(accessToken, '[HIDDEN_TOKEN]')}`);
     
-    const igRes = await fetch(igUrl);
-    
-    if (!igRes.ok) {
-      const errBody = await igRes.text();
-      console.error('❌ Instagram API error (/me/media). HTTP Status:', igRes.status, 'Response:', errBody);
-      return res.status(502).json({ error: 'Failed to fetch media from Instagram', details: errBody });
-    }
-
-    const data = await igRes.json();
+    const igRes = await axios.get(igUrl, { timeout: 15000 });
+    const data = igRes.data;
     console.log(`✅ Instagram API success. Received ${data.data?.length || 0} posts.`);
     
     // Map Instagram data to our format

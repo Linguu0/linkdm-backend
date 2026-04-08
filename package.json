@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "LinkDM — Instagram comment to auto-DM system backend",
   "engines": {
-    "node": "24.x"
+    "node": "20.x"
   },
   "main": "src/app.js",
   "scripts": {

@@ -12,7 +12,12 @@ function createRedisClient() {
   return new IORedis(redisUrl, {
     tls: { rejectUnauthorized: false },
     maxRetriesPerRequest: null,       // required by Bull
+    connectTimeout: 10000,            // 10s timeout
     enableReadyCheck: false,
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    }
   });
 }
 

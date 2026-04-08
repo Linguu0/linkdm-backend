@@ -70,7 +70,7 @@ if (require.main === module) {
   // Run migrations before starting the server
   runMigrations()
     .then(() => {
-      app.listen(PORT, () => {
+      app.listen(PORT, '0.0.0.0', () => {
         console.log('');
         console.log('═══════════════════════════════════════════');
         console.log(`  🚀 LinkDM Backend running on port ${PORT}`);
