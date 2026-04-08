@@ -63,7 +63,6 @@ router.get('/callback', async (req, res) => {
           token_expires_at: new Date(
             Date.now() + expiresIn * 1000
           ).toISOString(),
-          updated_at: new Date().toISOString(),
         },
         { onConflict: 'ig_user_id' }
       )

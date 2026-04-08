@@ -85,8 +85,9 @@ dmQueue.process(async (job) => {
   const { error } = await supabase.from('dm_logs').insert({
     campaign_id: campaignId,
     commenter_id: commenterId,
+    comment_id: commentId || null,
     dm_message: logMessage,
-    type: type || 'link',
+    status: dmSuccess ? 'sent' : 'failed',
     sent_at: new Date().toISOString(),
   });
 
