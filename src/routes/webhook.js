@@ -51,7 +51,7 @@ router.post('/instagram', async (req, res) => {
     }
 
     for (const entry of body.entry) {
-      const igUserId = entry.id; // the IG account that owns the media
+      const webhookUserId = entry.id; // the IG account from webhook
 
       if (!entry.changes) continue;
 
@@ -72,13 +72,49 @@ router.post('/instagram', async (req, res) => {
         console.log(
           `💬 Comment from ${commenterId}: "${commentText}" on media ${mediaId}`
         );
+        console.log(`🔍 Webhook entry.id = ${webhookUserId}, ENV IG_USER_ID = ${process.env.IG_USER_ID}`);
 
-        // 1. Find active campaigns for this IG account
-        const { data: campaigns, error: campError } = await supabase
+        // 1. Find active campaigns — try webhook entry.id first, then ENV fallback, then ALL
+        const igUserIdToTry = webhookUserId;
+        const envIgUserId = process.env.IG_USER_ID || '17841462923731141';
+
+        let campaigns = null;
+        let campError = null;
+
+        // Try with webhook entry.id first
+        const result1 = await supabase
           .from('campaigns')
           .select('*')
-          .eq('ig_user_id', igUserId)
+          .eq('ig_user_id', igUserIdToTry)
           .eq('is_active', true);
+
+        campaigns = result1.data;
+        campError = result1.error;
+
+        // If no campaigns found and env ID is different, try the env ID
+        if ((!campaigns || campaigns.length === 0) && envIgUserId !== igUserIdToTry) {
+          console.log(`🔄 No campaigns for webhook ID ${igUserIdToTry}, trying ENV ID ${envIgUserId}...`);
+          const result2 = await supabase
+            .from('campaigns')
+            .select('*')
+            .eq('ig_user_id', envIgUserId)
+            .eq('is_active', true);
+
+          campaigns = result2.data;
+          campError = result2.error;
+        }
+
+        // Last resort: just get ALL active campaigns
+        if (!campaigns || campaigns.length === 0) {
+          console.log('🔄 Still no campaigns, fetching ALL active campaigns...');
+          const result3 = await supabase
+            .from('campaigns')
+            .select('*')
+            .eq('is_active', true);
+
+          campaigns = result3.data;
+          campError = result3.error;
+        }
 
         if (campError) {
           console.error('❌ Error fetching campaigns:', campError.message);
@@ -86,9 +122,11 @@ router.post('/instagram', async (req, res) => {
         }
 
         if (!campaigns || campaigns.length === 0) {
-          console.log('ℹ️  No active campaigns for this account');
+          console.log('ℹ️  No active campaigns found at all');
           continue;
         }
+
+        console.log(`📋 Found ${campaigns.length} active campaign(s): ${campaigns.map(c => `"${c.name}" (ig_user_id=${c.ig_user_id})`).join(', ')}`);
 
         // 2. Resolve access token — prefer fresh ENV token over stale DB token
         let accessToken = process.env.ACCESS_TOKEN;
