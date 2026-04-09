@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
       auto_comment_reply,
     } = req.body;
 
-    const userId = ig_user_id || process.env.IG_USER_ID;
+    const userId = ig_user_id || process.env.IG_USER_ID || '17841462923731141';
 
     // Accept keyword as array or string, also accept legacy trigger_keyword
     let keywordValue = keyword || trigger_keyword;

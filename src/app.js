@@ -7,7 +7,7 @@ const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
-const { runMigrations } = require('./db/migrate');
+
 
 // ---------------------------------------------------------------------------
 // Express App
@@ -74,13 +74,6 @@ if (require.main === module) {
     console.log('═══════════════════════════════════════════');
     console.log(`  🚀 LinkDM Backend is LIVE on port ${PORT}`);
     console.log('═══════════════════════════════════════════');
-    
-    // Trigger migrations in the background
-    runMigrations().then(() => {
-      console.log('✅ Background: Database migrations checked');
-    }).catch(err => {
-      console.error('⚠️  Background: Migration warning:', err.message);
-    });
   });
 
   // Handle server errors (like EADDRINUSE)
