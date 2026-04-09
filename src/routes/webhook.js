@@ -37,8 +37,18 @@ router.post('/instagram', async (req, res) => {
 
   try {
     const body = req.body;
-    console.log('📩 Webhook event received:', JSON.stringify(body).substring(0, 300));
+    console.log('📩 Webhook event received:', JSON.stringify(body));
     
+    if (body.object === 'instagram' && body.entry) {
+      body.entry.forEach(e => {
+        if (e.messaging) {
+          console.log(`ℹ️ Detected messaging event in webhook from ${e.id} (ignoring for comment-to-DM)`);
+        }
+        if (e.changes) {
+          console.log(`ℹ️ Detected changes event in webhook from ${e.id}: ${e.changes.map(c => c.field).join(', ')}`);
+        }
+      });
+    }
 
 
     // Instagram webhook payload structure:
@@ -141,20 +151,19 @@ router.post('/instagram', async (req, res) => {
 
         // 3. Check each campaign for target + keyword match
         for (const campaign of campaigns) {
-          // Filter by target post if campaign targets a specific post
           if (campaign.target_type === 'specific_post' && campaign.target_media_id) {
             if (mediaId !== campaign.target_media_id) {
               console.log(
-                `⏭️  Skipping campaign "${campaign.name}" — target media ${campaign.target_media_id} ≠ ${mediaId}`
+                `⏭️ skipping campaign "${campaign.name}" — target media mismatch (${campaign.target_media_id} != ${mediaId})`
               );
               continue;
             }
           }
 
-          if (!matchesKeyword(commentText, campaign.keyword)) {
-            console.log(
-              `❌ No match: "${commentText}" vs keyword "${campaign.keyword}"`
-            );
+          const isMatch = matchesKeyword(commentText, campaign.keyword);
+          console.log(`🔎 Matching "${commentText}" against keyword "${campaign.keyword}" for campaign "${campaign.name}": ${isMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
+
+          if (!isMatch) {
             continue;
           }
 
@@ -186,10 +195,11 @@ router.post('/instagram', async (req, res) => {
           if (shouldSkip) continue;
 
           // 5. Enqueue the DM
+          console.log(`🚀 Triggering DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
             dmMessage: campaign.dm_message,
-            type: campaign.type || 'link',
+            type: campaign.dm_type || 'text_message',
             campaignId: campaign.id,
             accessToken,
             commentId,
