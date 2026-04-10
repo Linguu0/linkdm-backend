@@ -141,11 +141,11 @@ router.post('/instagram', async (req, res) => {
         // 2. Resolve access token — prefer fresh ENV token over stale DB token
         let accessToken = process.env.ACCESS_TOKEN;
         if (!accessToken && campaigns.length > 0 && campaigns[0].access_token) {
-          console.log(`ℹ️ Using campaign DB token for ${igUserId}`);
+          console.log(`ℹ️ Using campaign DB token for ${igUserIdToTry}`);
           accessToken = campaigns[0].access_token;
         }
         if (!accessToken) {
-          console.error('❌ No access token available for', igUserId);
+          console.error('❌ No access token available for', igUserIdToTry);
           continue;
         }
 
