@@ -138,11 +138,15 @@ router.post('/instagram', async (req, res) => {
 
         console.log(`📋 Found ${campaigns.length} active campaign(s): ${campaigns.map(c => `"${c.name}" (ig_user_id=${c.ig_user_id})`).join(', ')}`);
 
-        // 2. Resolve access token — prefer fresh ENV token over stale DB token
-        let accessToken = process.env.ACCESS_TOKEN;
-        if (!accessToken && campaigns.length > 0 && campaigns[0].access_token) {
+        // 2. Resolve access token — prefer fresh DB token over ENV fallback
+        let accessToken = null;
+        if (campaigns.length > 0 && campaigns[0].access_token) {
           console.log(`ℹ️ Using campaign DB token for ${igUserIdToTry}`);
           accessToken = campaigns[0].access_token;
+        }
+        if (!accessToken) {
+          console.log(`ℹ️ Falling back to ENV ACCESS_TOKEN`);
+          accessToken = process.env.ACCESS_TOKEN;
         }
         if (!accessToken) {
           console.error('❌ No access token available for', igUserIdToTry);

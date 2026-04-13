@@ -14,7 +14,7 @@ const API_URL = 'https://api.instagram.com';
  * @returns {object} API response data
  */
 async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link', commentId = null) {
-  const url = `${FB_GRAPH_URL}/me/messages`;
+  const url = `${GRAPH_URL}/me/messages`;
 
   let messagePayload;
 
