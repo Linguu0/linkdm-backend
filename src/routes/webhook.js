@@ -79,6 +79,18 @@ router.post('/instagram', async (req, res) => {
           continue;
         }
 
+        try {
+          await supabase.from('dm_logs').insert({
+            campaign_id: null,
+            commenter_id: commenterId,
+            comment_id: commentId,
+            dm_message: `DEBUG: Post=${mediaId}, Text="${commentText}"`,
+            status: 'debug'
+          });
+        } catch (e) {
+          console.error('Debug insert failed', e);
+        }
+
         console.log(
           `💬 Comment from ${commenterId}: "${commentText}" on media ${mediaId}`
         );
