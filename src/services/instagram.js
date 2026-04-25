@@ -60,18 +60,21 @@ async function sendDirectMessage(accessToken, recipientId, messageContent, type 
  *   https://api.instagram.com/oauth/access_token
  */
 async function exchangeCodeForToken(code) {
-  const url = `${FB_GRAPH_URL}/oauth/access_token`;
+  const url = `${API_URL}/oauth/access_token`;
 
   const params = new URLSearchParams();
   params.append('client_id', process.env.IG_APP_ID);
   params.append('client_secret', process.env.IG_APP_SECRET);
+  params.append('grant_type', 'authorization_code');
   params.append('redirect_uri', process.env.REDIRECT_URI);
   params.append('code', code);
 
-  const response = await axios.get(url, { params });
+  const response = await axios.post(url, params, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
 
-  console.log('🔑 Short-lived user token obtained');
-  return response.data; // { access_token, token_type, expires_in }
+  console.log('🔑 Short-lived token obtained');
+  return response.data; // { access_token, user_id }
 }
 
 /**
@@ -83,54 +86,18 @@ async function exchangeCodeForToken(code) {
  *   &access_token=...
  */
 async function exchangeForLongLivedToken(shortLivedToken) {
-  const url = `${FB_GRAPH_URL}/oauth/access_token`;
+  const url = `${GRAPH_URL}/access_token`;
 
   const response = await axios.get(url, {
     params: {
-      grant_type: 'fb_exchange_token',
-      client_id: process.env.IG_APP_ID,
+      grant_type: 'ig_exchange_token',
       client_secret: process.env.IG_APP_SECRET,
-      fb_exchange_token: shortLivedToken,
+      access_token: shortLivedToken,
     },
   });
 
-  console.log('🔑 Long-lived user token obtained (60 days)');
+  console.log('🔑 Long-lived token obtained (60 days)');
   return response.data; // { access_token, token_type, expires_in }
-}
-
-/**
- * Gets the Instagram Account ID and the Page Access Token 
- * by checking the Facebook Pages the user manages.
- */
-async function getInstagramAccountIdAndToken(userAccessToken) {
-  // 1. Get user's pages
-  const url = `${FB_GRAPH_URL}/me/accounts`;
-  const response = await axios.get(url, {
-    params: { access_token: userAccessToken }
-  });
-
-  const pages = response.data.data;
-  if (!pages || pages.length === 0) throw new Error("No Facebook Pages found");
-
-  // 2. Find a page with a linked Instagram account
-  for (const page of pages) {
-    const pageToken = page.access_token;
-    const igUrl = `${FB_GRAPH_URL}/${page.id}?fields=instagram_business_account&access_token=${pageToken}`;
-    try {
-      const igRes = await axios.get(igUrl);
-      if (igRes.data && igRes.data.instagram_business_account) {
-        console.log(`✅ Found linked Instagram Account ID: ${igRes.data.instagram_business_account.id}`);
-        return {
-          igUserId: igRes.data.instagram_business_account.id,
-          accessToken: pageToken
-        };
-      }
-    } catch (e) {
-      console.log(`⚠️ Page ${page.id} has no IG account or error fetching`);
-    }
-  }
-  
-  throw new Error("No linked Instagram Business/Creator account found on any Facebook Page");
 }
 
 async function replyToComment(accessToken, commentId, messageText) {
