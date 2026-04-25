@@ -11,17 +11,20 @@ router.get('/instagram', (req, res) => {
     const scopes = [
       'instagram_basic',
       'instagram_manage_comments',
-      'instagram_business_manage_messages',
+      'instagram_manage_messages',
+      'pages_show_list',
+      'pages_read_engagement',
+      'pages_manage_metadata'
     ].join(',');
 
     const authUrl =
-      `https://api.instagram.com/oauth/authorize` +
+      `https://www.facebook.com/v21.0/dialog/oauth` +
       `?client_id=${process.env.IG_APP_ID}` +
       `&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}` +
       `&scope=${scopes}` +
       `&response_type=code`;
 
-    console.log('🔗 Redirecting to Instagram OAuth...');
+    console.log('🔗 Redirecting to Facebook OAuth for Instagram Graph API...');
     return res.redirect(authUrl);
   } catch (err) {
     console.error('❌ Auth redirect error:', err.message);
@@ -46,12 +49,14 @@ router.get('/callback', async (req, res) => {
     // 1. Exchange code for short-lived token
     const shortLivedData = await exchangeCodeForToken(code);
     const shortLivedToken = shortLivedData.access_token;
-    const igUserId = shortLivedData.user_id;
 
-    // 2. Exchange for long-lived token (60 days)
+    // 2. Exchange for long-lived user token (60 days)
     const longLivedData = await exchangeForLongLivedToken(shortLivedToken);
     const longLivedToken = longLivedData.access_token;
-    const expiresIn = longLivedData.expires_in; // seconds
+
+    // 3. Get Instagram User ID and Page Access Token
+    const { getInstagramAccountIdAndToken } = require('../services/instagram');
+    const { igUserId, accessToken: pageAccessToken } = await getInstagramAccountIdAndToken(longLivedToken);
 
     // 3. Save / upsert into users table
     const { data, error } = await supabase
@@ -59,10 +64,8 @@ router.get('/callback', async (req, res) => {
       .upsert(
         {
           ig_user_id: igUserId.toString(),
-          access_token: longLivedToken,
-          token_expires_at: new Date(
-            Date.now() + expiresIn * 1000
-          ).toISOString(),
+          access_token: pageAccessToken, // Save the Page Access Token to send DMs
+          token_expires_at: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(), // Roughly 60 days
         },
         { onConflict: 'ig_user_id' }
       )

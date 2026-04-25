@@ -51,6 +51,7 @@ router.post('/', async (req, res) => {
       send_once_per_user,
       exclude_mentions,
       auto_comment_reply,
+      flow_data,
     } = req.body;
 
     const userId = ig_user_id || process.env.IG_USER_ID || '17841462923731141';
@@ -107,6 +108,7 @@ router.post('/', async (req, res) => {
       target_type: req.body.target_type || 'all_posts',
       target_media_id: req.body.target_media_id || null,
       target_thumbnail: req.body.target_thumbnail || null,
+      flow_data: flow_data || null,
     };
 
     const { data, error } = await supabase

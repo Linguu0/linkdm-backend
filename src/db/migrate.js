@@ -23,6 +23,8 @@ async function runMigrations() {
     { name: 'exclude_keywords', sql: `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS exclude_keywords JSONB DEFAULT NULL;` },
     { name: 'send_once_per_user', sql: `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_once_per_user BOOLEAN DEFAULT true;` },
     { name: 'exclude_mentions', sql: `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS exclude_mentions BOOLEAN DEFAULT false;` },
+    // Migration 005
+    { name: 'flow_data', sql: `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS flow_data JSONB DEFAULT NULL;` },
   ];
 
   for (const col of columns) {

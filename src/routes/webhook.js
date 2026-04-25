@@ -211,11 +211,29 @@ router.post('/instagram', async (req, res) => {
           if (shouldSkip) continue;
 
           // 5. Enqueue the DM
+          let finalMessage = campaign.dm_message;
+          if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
+            const flow = typeof campaign.flow_data === 'string' ? JSON.parse(campaign.flow_data) : campaign.flow_data;
+            if (flow && flow.nodes && flow.edges) {
+              const triggerNode = flow.nodes.find(n => n.type === 'triggerNode');
+              if (triggerNode) {
+                const edge = flow.edges.find(e => e.source === triggerNode.id);
+                if (edge) {
+                  const firstMsgNode = flow.nodes.find(n => n.id === edge.target);
+                  if (firstMsgNode && firstMsgNode.data && firstMsgNode.data.text) {
+                    finalMessage = firstMsgNode.data.text;
+                    console.log(`✨ Extracted message from Flow Builder: "${finalMessage}"`);
+                  }
+                }
+              }
+            }
+          }
+
           console.log(`🚀 Triggering DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
-            dmMessage: campaign.dm_message,
-            type: campaign.dm_type || 'text_message',
+            dmMessage: finalMessage,
+            type: campaign.dm_type === 'flow_builder' ? 'text_message' : (campaign.dm_type || 'text_message'),
             campaignId: campaign.id,
             accessToken,
             commentId,
