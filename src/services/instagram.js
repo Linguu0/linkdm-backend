@@ -124,6 +124,5 @@ module.exports = {
   sendDirectMessage,
   exchangeCodeForToken,
   exchangeForLongLivedToken,
-  getInstagramAccountIdAndToken,
   replyToComment,
 };
