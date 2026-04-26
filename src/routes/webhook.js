@@ -42,7 +42,90 @@ router.post('/instagram', async (req, res) => {
     if (body.object === 'instagram' && body.entry) {
       body.entry.forEach(e => {
         if (e.messaging) {
-          console.log(`ℹ️ Detected messaging event in webhook from ${e.id} (ignoring for comment-to-DM)`);
+          for (const msg of e.messaging) {
+            const senderId = msg.sender?.id;
+            const text = msg.message?.text;
+            
+            if (!senderId || !text) continue;
+            
+            console.log(`💬 Received message from ${senderId}: "${text}"`);
+            
+            // 1. Find active flow session for this user
+            const { data: states, error: stateError } = await supabase
+              .from('user_flow_states')
+              .select('*, campaigns(*)')
+              .eq('commenter_id', senderId)
+              .order('last_updated_at', { ascending: false });
+              
+            if (stateError || !states || states.length === 0) {
+              console.log(`ℹ️ No active flow state for ${senderId}`);
+              continue;
+            }
+            
+            const state = states[0]; // Take the most recent
+            const campaign = state.campaigns;
+            const flow = typeof campaign.flow_data === 'string' ? JSON.parse(campaign.flow_data) : campaign.flow_data;
+            
+            if (!flow || !flow.steps) continue;
+            
+            const currentIndex = state.current_step_index;
+            const currentStep = flow.steps[currentIndex];
+            
+            if (!currentStep) continue;
+            
+            console.log(`🔄 User ${senderId} is at step ${currentIndex} (${currentStep.type})`);
+            
+            // 2. Handle the current step
+            if (currentStep.type === 'condition') {
+              const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+              const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
+              
+              if (isMatch) {
+                console.log(`✅ Condition matched for ${senderId}! Advancing to next step...`);
+                
+                // Move to next step
+                let nextIndex = currentIndex + 1;
+                let nextStep = flow.steps[nextIndex];
+                
+                // Skip delay steps for now (or implement delay handling)
+                while (nextStep && nextStep.type === 'delay') {
+                   nextIndex++;
+                   nextStep = flow.steps[nextIndex];
+                }
+                
+                if (nextStep && nextStep.type === 'message') {
+                  console.log(`🚀 Sending next flow message to ${senderId}`);
+                  await enqueueDM({
+                    commenterId: senderId,
+                    dmMessage: nextStep.text,
+                    type: 'text_message',
+                    campaignId: campaign.id,
+                    accessToken: campaign.access_token || process.env.ACCESS_TOKEN,
+                  });
+                  
+                  // Update state to the step AFTER the one we just sent
+                  const finalIndex = nextIndex + 1;
+                  if (flow.steps[finalIndex]) {
+                    await supabase
+                      .from('user_flow_states')
+                      .update({ current_step_index: finalIndex, last_updated_at: new Date().toISOString() })
+                      .eq('id', state.id);
+                  } else {
+                    // End of flow
+                    await supabase.from('user_flow_states').delete().eq('id', state.id);
+                  }
+                } else {
+                   // No more messages
+                   await supabase.from('user_flow_states').delete().eq('id', state.id);
+                }
+              } else {
+                console.log(`❌ Condition NO MATCH for ${senderId} ("${text}" vs "${currentStep.matchKeywords}")`);
+              }
+            } else if (currentStep.type === 'message') {
+               // This shouldn't really happen if we stop at conditions, but handle just in case
+               // Skip to next step
+            }
+          }
         }
         if (e.changes) {
           console.log(`ℹ️ Detected changes event in webhook from ${e.id}: ${e.changes.map(c => c.field).join(', ')}`);
@@ -215,35 +298,38 @@ router.post('/instagram', async (req, res) => {
             const flow = typeof campaign.flow_data === 'string' ? JSON.parse(campaign.flow_data) : campaign.flow_data;
             
             if (flow && flow.steps && Array.isArray(flow.steps)) {
-              let cumulativeDelay = 0;
-              let messageCount = 0;
+              // 5a. Find the first message step
+              const firstStepIndex = flow.steps.findIndex(s => s.type === 'message');
+              if (firstStepIndex !== -1) {
+                const firstStep = flow.steps[firstStepIndex];
+                
+                console.log(`📥 Starting flow for ${commenterId}, sending first message...`);
+                await enqueueDM({
+                  commenterId,
+                  dmMessage: firstStep.text,
+                  type: 'text_message',
+                  campaignId: campaign.id,
+                  accessToken,
+                  commentId,
+                  autoReply: campaign.auto_comment_reply || false,
+                });
 
-              for (const step of flow.steps) {
-                if (step.type === 'message' && step.text) {
-                  messageCount++;
-                  console.log(`📥 Enqueuing flow message ${messageCount} with ${cumulativeDelay}ms delay`);
-                  await enqueueDM({
-                    commenterId,
-                    dmMessage: step.text,
-                    type: 'text_message',
-                    campaignId: campaign.id,
-                    accessToken,
-                    commentId: messageCount === 1 ? commentId : null, // Only reply to comment once
-                    autoReply: messageCount === 1 ? (campaign.auto_comment_reply || false) : false,
-                    delay: cumulativeDelay
-                  });
-                } else if (step.type === 'delay') {
-                  const duration = parseInt(step.duration) || 0;
-                  const unit = step.unit || 'minutes';
-                  let ms = 0;
-                  if (unit === 'seconds') ms = duration * 1000;
-                  else if (unit === 'minutes') ms = duration * 60 * 1000;
-                  else if (unit === 'hours') ms = duration * 60 * 60 * 1000;
-                  cumulativeDelay += ms;
+                // 5b. Save state for next step if it exists
+                if (flow.steps.length > firstStepIndex + 1) {
+                  const nextStep = flow.steps[firstStepIndex + 1];
+                  console.log(`💾 Saving flow state for ${commenterId}, next step index: ${firstStepIndex + 1}`);
+                  
+                  await supabase
+                    .from('user_flow_states')
+                    .upsert({
+                      commenter_id: commenterId,
+                      campaign_id: campaign.id,
+                      current_step_index: firstStepIndex + 1,
+                      last_updated_at: new Date().toISOString()
+                    }, { onConflict: 'commenter_id, campaign_id' });
                 }
-                // Condition steps would require a more complex state machine/worker
               }
-              continue; // Move to next campaign since we handled the enqueuing here
+              continue;
             } else if (flow && flow.nodes && flow.edges) {
               // Backwards compatibility for old nodes/edges format
               const triggerNode = flow.nodes.find(n => n.type === 'triggerNode');
