@@ -253,17 +253,11 @@ router.get('/preview', async (req, res) => {
 
     // If we have a numeric media ID, query directly
     if (/^\d+$/.test(mediaId)) {
-      const igRes = await fetch(
+      const igRes = await axios.get(
         `https://graph.instagram.com/${mediaId}?fields=id,media_type,thumbnail_url,timestamp&access_token=${accessToken}`
       );
 
-      if (!igRes.ok) {
-        const errBody = await igRes.json().catch(() => ({}));
-        console.error('❌ Instagram API error:', errBody);
-        return res.status(404).json({ error: 'Post not found or access denied' });
-      }
-
-      const igData = await igRes.json();
+      const igData = igRes.data;
       console.log(`✅ Post preview fetched: ${igData.id} (${igData.media_type})`);
 
       return res.json({
