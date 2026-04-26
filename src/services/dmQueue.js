@@ -21,105 +21,123 @@ function createRedisClient() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Bull queue
-// ---------------------------------------------------------------------------
-const dmQueue = new Queue('dm-queue', {
-  createClient: (type) => createRedisClient(),
-  limiter: {
-    max: 10,        // max 10 jobs
-    duration: 60000, // per minute
-  },
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 5000,  // first retry after 5 s, then 10 s, then 20 s
+let dmQueue = null;
+
+try {
+  dmQueue = new Queue('dm-queue', {
+    createClient: (type) => createRedisClient(),
+    limiter: {
+      max: 10,
+      duration: 60000,
     },
-    removeOnComplete: true,
-    removeOnFail: false,
-  },
-});
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 5000,
+      },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  });
+  console.log('✅ Bull DM queue initialized');
+} catch (err) {
+  console.error('❌ Failed to initialize Bull queue:', err.message);
+}
 
-console.log('✅ Bull DM queue initialized');
+if (dmQueue) {
+  // Health check events
+  dmQueue.on('ready', () => console.log('✅ Bull queue READY — actively consuming jobs'));
+  dmQueue.on('error', (err) => console.error('❌ Bull queue connection ERROR:', err.message));
+  dmQueue.on('stalled', (job) => console.warn('⚠️ Job stalled:', job.id));
 
-// Health check events
-dmQueue.on('ready', () => console.log('✅ Bull queue READY — actively consuming jobs'));
-dmQueue.on('error', (err) => console.error('❌ Bull queue connection ERROR:', err.message));
-dmQueue.on('stalled', (job) => console.warn('⚠️ Job stalled:', job.id));
+  // ---------------------------------------------------------------------------
+  // Processor — runs for each job
+  // ---------------------------------------------------------------------------
+  dmQueue.process(async (job) => {
+    const { commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId } = job.data;
 
-// ---------------------------------------------------------------------------
-// Processor — runs for each job
-// ---------------------------------------------------------------------------
-dmQueue.process(async (job) => {
-  const { commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId } = job.data;
+    console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
-  console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
+    let dmSuccess = true;
+    let dmErrorMsg = null;
 
-  let dmSuccess = true;
-  let dmErrorMsg = null;
-
-  // 1. Send the DM via Instagram Graph API
-  try {
-    await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
-  } catch (err) {
-    dmSuccess = false;
-    dmErrorMsg = err.response?.data?.error?.message || err.message;
-    console.warn(`⚠️ Failed to send DM to ${commenterId}:`, dmErrorMsg);
-    console.warn("If you are testing from your own account, Instagram does not allow sending DMs to yourself.");
-  }
-
-  // 1.5 Auto Reply to comment if enabled
-  if (autoReply && commentId) {
+    // 1. Send the DM via Instagram Graph API
     try {
-      // Small delay just to act natural if we also sent a DM
-      await new Promise(res => setTimeout(res, 1000));
-      await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
     } catch (err) {
-      console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.response?.data?.error?.message || err.message);
+      dmSuccess = false;
+      dmErrorMsg = err.response?.data?.error?.message || err.message;
+      console.warn(`⚠️ Failed to send DM to ${commenterId}:`, dmErrorMsg);
+      console.warn("If you are testing from your own account, Instagram does not allow sending DMs to yourself.");
     }
-  }
 
-  // 2. Log to dm_logs table (even if DM failed, we want to know it attempted and the status)
-  const logMessage = dmSuccess ? dmMessage : `FAILED: ${dmErrorMsg}`;
-  const { error } = await supabase.from('dm_logs').insert({
-    campaign_id: campaignId,
-    commenter_id: commenterId,
-    comment_id: commentId || null,
-    dm_message: logMessage,
-    status: dmSuccess ? 'sent' : 'failed',
-    sent_at: new Date().toISOString(),
+    // 1.5 Auto Reply to comment if enabled
+    if (autoReply && commentId) {
+      try {
+        // Small delay just to act natural if we also sent a DM
+        await new Promise(res => setTimeout(res, 1000));
+        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+      } catch (err) {
+        console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.response?.data?.error?.message || err.message);
+      }
+    }
+
+    // 2. Log to dm_logs table (even if DM failed, we want to know it attempted and the status)
+    const logMessage = dmSuccess ? dmMessage : `FAILED: ${dmErrorMsg}`;
+    const { error } = await supabase.from('dm_logs').insert({
+      campaign_id: campaignId,
+      commenter_id: commenterId,
+      comment_id: commentId || null,
+      dm_message: logMessage,
+      status: dmSuccess ? 'sent' : 'failed',
+      sent_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      console.error('❌ Failed to insert dm_log:', error.message);
+      // Don't throw to retry, as we already attempted the DM. Just finish job.
+    }
+
+    if (dmSuccess) {
+      console.log(`✅ DM logged successfully for commenter ${commenterId}`);
+    } else {
+      // If we want Bull to record it as failed, we can throw here after logging to DB
+      // but typically we don't want to retry 400 Bad Requests indefinitely.
+      console.log(`❌ DM failed for commenter ${commenterId}, but logged attempt.`);
+    }
   });
 
-  if (error) {
-    console.error('❌ Failed to insert dm_log:', error.message);
-    // Don't throw to retry, as we already attempted the DM. Just finish job.
-  }
+  // ---------------------------------------------------------------------------
+  // Event listeners
+  // ---------------------------------------------------------------------------
+  dmQueue.on('failed', (job, err) => {
+    console.error(`❌ Job ${job.id} failed after ${job.attemptsMade} attempts:`, err.message);
+  });
 
-  if (dmSuccess) {
-    console.log(`✅ DM logged successfully for commenter ${commenterId}`);
-  } else {
-    // If we want Bull to record it as failed, we can throw here after logging to DB
-    // but typically we don't want to retry 400 Bad Requests indefinitely.
-    console.log(`❌ DM failed for commenter ${commenterId}, but logged attempt.`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Event listeners
-// ---------------------------------------------------------------------------
-dmQueue.on('failed', (job, err) => {
-  console.error(`❌ Job ${job.id} failed after ${job.attemptsMade} attempts:`, err.message);
-});
-
-dmQueue.on('completed', (job) => {
-  console.log(`🎉 Job ${job.id} completed`);
-});
+  dmQueue.on('completed', (job) => {
+    console.log(`🎉 Job ${job.id} completed`);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
 async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, delay = 0 }) {
+  if (!dmQueue) {
+    console.warn('⚠️ Bull queue not initialized, sending DM directly (no delay support)');
+    // Fallback to direct send (this might block the event loop but better than nothing)
+    try {
+      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
+      if (autoReply && commentId) {
+        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+      }
+    } catch (e) {
+      console.error('❌ Direct DM fallback failed', e.message);
+    }
+    return null;
+  }
+
   const job = await dmQueue.add({
     commenterId,
     dmMessage,
