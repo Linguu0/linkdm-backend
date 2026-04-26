@@ -101,7 +101,7 @@ async function exchangeForLongLivedToken(shortLivedToken) {
 }
 
 async function replyToComment(accessToken, commentId, messageText) {
-  const url = `${GRAPH_URL}/${commentId}/replies`;
+  const url = `${FB_GRAPH_URL}/${commentId}/replies`;
 
   const payload = {
     message: messageText,
