@@ -119,7 +119,7 @@ dmQueue.on('completed', (job) => {
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
-async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId }) {
+async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, delay = 0 }) {
   const job = await dmQueue.add({
     commenterId,
     dmMessage,
@@ -128,6 +128,8 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
     accessToken,
     autoReply,
     commentId,
+  }, {
+    delay: delay // milliseconds
   });
 
   console.log(`📥 Enqueued ${type || 'link'} DM job ${job.id} for commenter ${commenterId}`);

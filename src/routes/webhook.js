@@ -210,30 +210,70 @@ router.post('/instagram', async (req, res) => {
 
           if (shouldSkip) continue;
 
-          // 5. Enqueue the DM
-          let finalMessage = campaign.dm_message;
+          // 5. Enqueue the DM(s)
           if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
             const flow = typeof campaign.flow_data === 'string' ? JSON.parse(campaign.flow_data) : campaign.flow_data;
-            if (flow && flow.nodes && flow.edges) {
+            
+            if (flow && flow.steps && Array.isArray(flow.steps)) {
+              let cumulativeDelay = 0;
+              let messageCount = 0;
+
+              for (const step of flow.steps) {
+                if (step.type === 'message' && step.text) {
+                  messageCount++;
+                  console.log(`📥 Enqueuing flow message ${messageCount} with ${cumulativeDelay}ms delay`);
+                  await enqueueDM({
+                    commenterId,
+                    dmMessage: step.text,
+                    type: 'text_message',
+                    campaignId: campaign.id,
+                    accessToken,
+                    commentId: messageCount === 1 ? commentId : null, // Only reply to comment once
+                    autoReply: messageCount === 1 ? (campaign.auto_comment_reply || false) : false,
+                    delay: cumulativeDelay
+                  });
+                } else if (step.type === 'delay') {
+                  const duration = parseInt(step.duration) || 0;
+                  const unit = step.unit || 'minutes';
+                  let ms = 0;
+                  if (unit === 'seconds') ms = duration * 1000;
+                  else if (unit === 'minutes') ms = duration * 60 * 1000;
+                  else if (unit === 'hours') ms = duration * 60 * 60 * 1000;
+                  cumulativeDelay += ms;
+                }
+                // Condition steps would require a more complex state machine/worker
+              }
+              continue; // Move to next campaign since we handled the enqueuing here
+            } else if (flow && flow.nodes && flow.edges) {
+              // Backwards compatibility for old nodes/edges format
               const triggerNode = flow.nodes.find(n => n.type === 'triggerNode');
               if (triggerNode) {
                 const edge = flow.edges.find(e => e.source === triggerNode.id);
                 if (edge) {
                   const firstMsgNode = flow.nodes.find(n => n.id === edge.target);
                   if (firstMsgNode && firstMsgNode.data && firstMsgNode.data.text) {
-                    finalMessage = firstMsgNode.data.text;
-                    console.log(`✨ Extracted message from Flow Builder: "${finalMessage}"`);
+                    await enqueueDM({
+                      commenterId,
+                      dmMessage: firstMsgNode.data.text,
+                      type: 'text_message',
+                      campaignId: campaign.id,
+                      accessToken,
+                      commentId,
+                      autoReply: campaign.auto_comment_reply || false,
+                    });
+                    continue;
                   }
                 }
               }
             }
           }
 
-          console.log(`🚀 Triggering DM for "${campaign.name}" to commenter ${commenterId}`);
+          // Default single DM handling
+          console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
-            dmMessage: finalMessage,
-            type: campaign.dm_type === 'flow_builder' ? 'text_message' : (campaign.dm_type || 'text_message'),
+            dmMessage: campaign.dm_message,
+            type: campaign.dm_type || 'text_message',
             campaignId: campaign.id,
             accessToken,
             commentId,
