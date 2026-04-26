@@ -58,6 +58,7 @@ app.get('/', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'LinkDM Backend',
+    version: '2.1.0',
     timestamp: new Date().toISOString(),
   });
 });
