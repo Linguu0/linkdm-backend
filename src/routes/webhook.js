@@ -40,7 +40,7 @@ router.post('/instagram', async (req, res) => {
     console.log('📩 Webhook event received:', JSON.stringify(body));
     
     if (body.object === 'instagram' && body.entry) {
-      body.entry.forEach(e => {
+      for (const e of body.entry) {
         if (e.messaging) {
           for (const msg of e.messaging) {
             const senderId = msg.sender?.id;
@@ -130,7 +130,7 @@ router.post('/instagram', async (req, res) => {
         if (e.changes) {
           console.log(`ℹ️ Detected changes event in webhook from ${e.id}: ${e.changes.map(c => c.field).join(', ')}`);
         }
-      });
+      }
     }
 
 
@@ -319,7 +319,7 @@ router.post('/instagram', async (req, res) => {
                   const nextStep = flow.steps[firstStepIndex + 1];
                   console.log(`💾 Saving flow state for ${commenterId}, next step index: ${firstStepIndex + 1}`);
                   
-                  await supabase
+                  const { error: upsertErr } = await supabase
                     .from('user_flow_states')
                     .upsert({
                       commenter_id: commenterId,
@@ -327,6 +327,10 @@ router.post('/instagram', async (req, res) => {
                       current_step_index: firstStepIndex + 1,
                       last_updated_at: new Date().toISOString()
                     }, { onConflict: 'commenter_id, campaign_id' });
+                  
+                  if (upsertErr) {
+                    console.error('❌ Failed to save user_flow_state:', upsertErr);
+                  }
                 }
               }
               continue;
