@@ -101,23 +101,30 @@ async function exchangeForLongLivedToken(shortLivedToken) {
 }
 
 async function replyToComment(accessToken, commentId, messageText) {
-  const url = `${FB_GRAPH_URL}/${commentId}/replies`;
+  // Use graph.facebook.com for comment replies as it's more stable for Business accounts
+  const url = `https://graph.facebook.com/v21.0/${commentId}/replies`;
 
   const payload = {
     message: messageText,
   };
 
-  console.log(`💬 Replying to comment ${commentId}...`);
+  console.log(`💬 Replying to comment ${commentId} via FB Graph API...`);
 
-  const response = await axios.post(url, payload, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
+  try {
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-  console.log(`✅ Reply sent successfully to comment ${commentId}`);
-  return response.data;
+    console.log(`✅ Reply sent successfully to comment ${commentId}`);
+    return response.data;
+  } catch (err) {
+    const errorMsg = err.response?.data?.error?.message || err.message;
+    console.error(`❌ Failed to reply to comment ${commentId}:`, errorMsg);
+    throw new Error(errorMsg);
+  }
 }
 
 module.exports = {

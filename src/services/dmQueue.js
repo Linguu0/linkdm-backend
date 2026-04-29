@@ -59,6 +59,19 @@ if (dmQueue) {
 
     console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
+    // Special case: Flow Advancement
+    if (type === 'flow_advance') {
+      try {
+        const { advanceFlow } = require('./flowRunner');
+        await advanceFlow({ commenterId, campaignId, accessToken });
+        console.log(`✅ Flow advanced for ${commenterId} via queue job ${job.id}`);
+        return;
+      } catch (err) {
+        console.error('❌ Failed to advance flow from queue:', err.message);
+        throw err; // Allow Bull to retry
+      }
+    }
+
     let dmSuccess = true;
     let dmErrorMsg = null;
 
@@ -96,14 +109,11 @@ if (dmQueue) {
 
     if (error) {
       console.error('❌ Failed to insert dm_log:', error.message);
-      // Don't throw to retry, as we already attempted the DM. Just finish job.
     }
 
     if (dmSuccess) {
       console.log(`✅ DM logged successfully for commenter ${commenterId}`);
     } else {
-      // If we want Bull to record it as failed, we can throw here after logging to DB
-      // but typically we don't want to retry 400 Bad Requests indefinitely.
       console.log(`❌ DM failed for commenter ${commenterId}, but logged attempt.`);
     }
   });
@@ -126,14 +136,41 @@ if (dmQueue) {
 async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, delay = 0 }) {
   if (!dmQueue) {
     console.warn('⚠️ Bull queue not initialized, sending DM directly (no delay support)');
-    // Fallback to direct send (this might block the event loop but better than nothing)
+    // Fallback to direct send
     try {
+      // For flow_advance, call advanceFlow directly
+      if (type === 'flow_advance') {
+        const { advanceFlow } = require('./flowRunner');
+        await advanceFlow({ commenterId, campaignId, accessToken });
+        return null;
+      }
+
       await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
+      
+      // LOG TO DB EVEN IN FALLBACK
+      await supabase.from('dm_logs').insert({
+        campaign_id: campaignId,
+        commenter_id: commenterId,
+        comment_id: commentId || null,
+        dm_message: dmMessage,
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+
       if (autoReply && commentId) {
         await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
       }
     } catch (e) {
       console.error('❌ Direct DM fallback failed', e.message);
+      // LOG FAILURE TO DB
+      await supabase.from('dm_logs').insert({
+        campaign_id: campaignId,
+        commenter_id: commenterId,
+        comment_id: commentId || null,
+        dm_message: `FAILED: ${e.message}`,
+        status: 'failed',
+        sent_at: new Date().toISOString(),
+      });
     }
     return null;
   }
@@ -150,7 +187,7 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
     delay: delay // milliseconds
   });
 
-  console.log(`📥 Enqueued ${type || 'link'} DM job ${job.id} for commenter ${commenterId}`);
+  console.log(`📥 Enqueued ${type || 'link'} DM job ${job.id} for commenter ${commenterId}${delay > 0 ? ` (delay: ${delay}ms)` : ''}`);
   return job;
 }
 
