@@ -13,7 +13,7 @@ const API_URL = 'https://api.instagram.com';
  * @param {string} type – The type of message ('text', 'link', 'pdf')
  * @returns {object} API response data
  */
-async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link', commentId = null) {
+async function sendDirectMessage(accessToken, recipientId, messageContent, type = 'link', commentId = null, buttonTemplateData = null, quickRepliesData = null) {
   const url = `${GRAPH_URL}/me/messages`;
 
   let messagePayload;
@@ -27,6 +27,48 @@ async function sendDirectMessage(accessToken, recipientId, messageContent, type 
           is_compressible: true,
         },
       },
+    };
+  } else if (type === 'button_template' && buttonTemplateData && buttonTemplateData.length > 0) {
+    messagePayload = {
+      attachment: {
+        type: "template",
+        payload: {
+          template_type: "generic",
+          elements: buttonTemplateData.map(slide => {
+            const element = {
+              title: slide.title || "Message",
+            };
+            if (slide.image) {
+              element.image_url = slide.image;
+            }
+            
+            const btn = {
+              title: slide.btnLabel || "Click Here"
+            };
+            if (slide.destination === 'url') {
+              btn.type = "web_url";
+              btn.url = slide.url;
+            } else if (slide.destination === 'phone') {
+              btn.type = "phone_number";
+              btn.payload = slide.url;
+            } else if (slide.destination === 'email') {
+              btn.type = "web_url";
+              btn.url = slide.url.startsWith('mailto:') ? slide.url : `mailto:${slide.url}`;
+            }
+            element.buttons = [btn];
+            return element;
+          })
+        }
+      }
+    };
+  } else if (type === 'quick_replies' && quickRepliesData && quickRepliesData.length > 0) {
+    messagePayload = {
+      text: messageContent,
+      quick_replies: quickRepliesData.map((qr, i) => ({
+        content_type: "text",
+        title: qr.text,
+        payload: `QUICK_REPLY_${i}`
+      }))
     };
   } else {
     // text or link
@@ -101,14 +143,14 @@ async function exchangeForLongLivedToken(shortLivedToken) {
 }
 
 async function replyToComment(accessToken, commentId, messageText) {
-  // Use graph.facebook.com for comment replies as it's more stable for Business accounts
-  const url = `https://graph.facebook.com/v21.0/${commentId}/replies`;
+  // Use GRAPH_URL because Instagram User Access Tokens (IGAAT) do not work on graph.facebook.com
+  const url = `${GRAPH_URL}/${commentId}/replies`;
 
   const payload = {
     message: messageText,
   };
 
-  console.log(`💬 Replying to comment ${commentId} via FB Graph API...`);
+  console.log(`💬 Replying to comment ${commentId} via Instagram Graph API...`);
 
   try {
     const response = await axios.post(url, payload, {

@@ -60,7 +60,7 @@ router.post('/instagram', async (req, res) => {
       if (entry.messaging) {
         for (const msg of entry.messaging) {
           const senderId = msg.sender?.id;
-          const text = msg.message?.text;
+          const text = msg.message?.quick_reply?.payload || msg.message?.text || msg.postback?.payload || msg.postback?.title;
 
           if (!senderId || !text) continue;
 
@@ -130,6 +130,14 @@ router.post('/instagram', async (req, res) => {
           continue;
         }
 
+        const envIgUserId = process.env.IG_USER_ID || '17841462923731141';
+
+        // Ignore comments from the page itself to prevent infinite loops
+        if (commenterId === webhookUserId || commenterId === envIgUserId) {
+          console.log('⚠️  Ignoring comment from the page itself');
+          continue;
+        }
+
         // Insert debug log
         try {
           await supabase.from('dm_logs').insert({
@@ -147,7 +155,6 @@ router.post('/instagram', async (req, res) => {
         console.log(`💬 Comment from ${commenterId}: "${commentText}" on media ${mediaId}`);
 
         // 1. Find active campaigns — try webhook entry.id, then ENV fallback, then ALL
-        const envIgUserId = process.env.IG_USER_ID || '17841462923731141';
         let campaigns = null;
         let campError = null;
 
@@ -285,7 +292,7 @@ router.post('/instagram', async (req, res) => {
             console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
 
             // BUG 3 FIX: Auto-reply to comment for flow_builder campaigns too
-            if (campaign.auto_comment_reply && commentId) {
+            if (campaign.auto_comment_reply !== false && commentId) {
               try {
                 const campaignToken = campaign.access_token || accessToken;
                 await replyToComment(campaignToken, commentId, 'Check your DMs! 📩');
@@ -314,7 +321,9 @@ router.post('/instagram', async (req, res) => {
             campaignId: campaign.id,
             accessToken,
             commentId,
-            autoReply: campaign.auto_comment_reply || false,
+            autoReply: campaign.auto_comment_reply !== false,
+            buttonTemplateData: campaign.button_template_data,
+            quickRepliesData: campaign.quick_replies_data
           });
         }
       }

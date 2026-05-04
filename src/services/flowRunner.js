@@ -81,12 +81,14 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     await enqueueDM({
       commenterId,
       dmMessage: currentStep.text,
-      type: 'text_message',
+      type: currentStep.messageType || 'text_message',
       campaignId: campaign.id,
       accessToken,
       commentId: currentIndex === 0 ? commentId : null,
       // Auto-reply is handled in webhook.js now (BUG 3 FIX), don't duplicate
-      autoReply: false
+      autoReply: false,
+      buttonTemplateData: currentStep.buttonTemplateData || null,
+      quickRepliesData: currentStep.quickRepliesData || null
     });
 
     // C. Move to next step automatically

@@ -55,7 +55,7 @@ if (dmQueue) {
   // Processor — runs for each job
   // ---------------------------------------------------------------------------
   dmQueue.process(async (job) => {
-    const { commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId } = job.data;
+    const { commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, buttonTemplateData, quickRepliesData } = job.data;
 
     console.log(`⚙️  Processing ${type || 'link'} DM job ${job.id} → commenter ${commenterId}`);
 
@@ -75,25 +75,25 @@ if (dmQueue) {
     let dmSuccess = true;
     let dmErrorMsg = null;
 
-    // 1. Send the DM via Instagram Graph API
+    // 1. Auto Reply to comment if enabled
+    if (autoReply && commentId) {
+      try {
+        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+        // Small delay just to act natural before we send the DM
+        await new Promise(res => setTimeout(res, 1000));
+      } catch (err) {
+        console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.response?.data?.error?.message || err.message);
+      }
+    }
+
+    // 2. Send the DM via Instagram Graph API
     try {
-      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
+      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId, buttonTemplateData, quickRepliesData);
     } catch (err) {
       dmSuccess = false;
       dmErrorMsg = err.response?.data?.error?.message || err.message;
       console.warn(`⚠️ Failed to send DM to ${commenterId}:`, dmErrorMsg);
       console.warn("If you are testing from your own account, Instagram does not allow sending DMs to yourself.");
-    }
-
-    // 1.5 Auto Reply to comment if enabled
-    if (autoReply && commentId) {
-      try {
-        // Small delay just to act natural if we also sent a DM
-        await new Promise(res => setTimeout(res, 1000));
-        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
-      } catch (err) {
-        console.warn(`⚠️ Failed to reply to comment ${commentId}:`, err.response?.data?.error?.message || err.message);
-      }
     }
 
     // 2. Log to dm_logs table (even if DM failed, we want to know it attempted and the status)
@@ -133,7 +133,7 @@ if (dmQueue) {
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
-async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, delay = 0 }) {
+async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, buttonTemplateData, quickRepliesData, delay = 0 }) {
   if (!dmQueue) {
     console.warn('⚠️ Bull queue not initialized, sending DM directly (no delay support)');
     // Fallback to direct send
@@ -145,7 +145,11 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
         return null;
       }
 
-      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId);
+      if (autoReply && commentId) {
+        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
+      }
+
+      await sendDirectMessage(accessToken, commenterId, dmMessage, type, commentId, buttonTemplateData, quickRepliesData);
       
       // LOG TO DB EVEN IN FALLBACK
       await supabase.from('dm_logs').insert({
@@ -156,10 +160,6 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
         status: 'sent',
         sent_at: new Date().toISOString(),
       });
-
-      if (autoReply && commentId) {
-        await replyToComment(accessToken, commentId, 'Check your DMs! 📩');
-      }
     } catch (e) {
       console.error('❌ Direct DM fallback failed', e.message);
       // LOG FAILURE TO DB
@@ -183,6 +183,8 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
     accessToken,
     autoReply,
     commentId,
+    buttonTemplateData,
+    quickRepliesData,
   }, {
     delay: delay // milliseconds
   });
