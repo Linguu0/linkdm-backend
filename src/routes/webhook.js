@@ -103,7 +103,8 @@ router.post('/instagram', async (req, res) => {
                 commenterId: senderId,
                 campaignId: campaign.id,
                 accessToken: campaign.access_token || process.env.ACCESS_TOKEN,
-                stepIndex: currentIndex + 1
+                stepIndex: currentIndex + 1,
+                isUserReply: true  // User replied → 24h window is open
               });
               break;
             }

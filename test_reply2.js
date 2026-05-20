@@ -13,16 +13,9 @@ async function test() {
     .not('comment_id', 'is', null)
     .neq('status', 'debug')
     .order('sent_at', { ascending: false })
-    .limit(5);
+    .limit(1);
     
-  if (!logs || logs.length === 0) {
-    console.log("No logs with comment_id found.");
-    return;
-  }
-  
   const log = logs[0];
-  console.log("Found log:", log);
-  
   const { data: campaigns } = await supabase
     .from('campaigns')
     .select('access_token')
@@ -30,14 +23,7 @@ async function test() {
     .limit(1);
     
   let token = (campaigns && campaigns[0] && campaigns[0].access_token) ? campaigns[0].access_token : process.env.ACCESS_TOKEN;
-  
-  console.log("Testing reply...");
-  try {
-    const res = await replyToComment(token, log.comment_id, 'Testing auto reply!');
-    console.log("Success!", res);
-  } catch (err) {
-    console.error("Error:", err.message);
-  }
+  console.log("Token starts with:", token ? token.substring(0, 15) : "NULL/UNDEFINED");
 }
 
 test();

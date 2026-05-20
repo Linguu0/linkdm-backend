@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
-const { replyToComment } = require('./src/services/instagram');
+const axios = require('axios');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -13,16 +13,9 @@ async function test() {
     .not('comment_id', 'is', null)
     .neq('status', 'debug')
     .order('sent_at', { ascending: false })
-    .limit(5);
+    .limit(1);
     
-  if (!logs || logs.length === 0) {
-    console.log("No logs with comment_id found.");
-    return;
-  }
-  
   const log = logs[0];
-  console.log("Found log:", log);
-  
   const { data: campaigns } = await supabase
     .from('campaigns')
     .select('access_token')
@@ -30,13 +23,22 @@ async function test() {
     .limit(1);
     
   let token = (campaigns && campaigns[0] && campaigns[0].access_token) ? campaigns[0].access_token : process.env.ACCESS_TOKEN;
+  const commentId = log.comment_id;
   
-  console.log("Testing reply...");
+  const url = `https://graph.instagram.com/v21.0/${commentId}/replies`;
+  const payload = { message: 'Testing auto reply!' };
+  
+  console.log("Testing graph.instagram.com with Bearer token...");
   try {
-    const res = await replyToComment(token, log.comment_id, 'Testing auto reply!');
-    console.log("Success!", res);
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    console.log("Success!", response.data);
   } catch (err) {
-    console.error("Error:", err.message);
+    console.error("Error:", err.response?.data?.error?.message || err.message);
   }
 }
 

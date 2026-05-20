@@ -6,9 +6,50 @@ const { replyToComment } = require('./instagram');
  * flowRunner.js — Active Flow Execution Service
  * 
  * Handles advancing users through multi-step automation flows.
- * Uses Supabase `pending_delays` table for reliable delay persistence
- * (survives Render spin-downs and server restarts).
+ * 
+ * IMPORTANT — Instagram API Limitation:
+ * A private reply (comment_id) only allows ONE message per comment.
+ * The 24-hour DM window does NOT open from a private reply — only when 
+ * the USER replies back. So for flows without a condition step (user reply),
+ * all messages before the first condition must be MERGED into a single DM.
+ * 
+ * For flows WITH a condition step, the condition waits for user reply,
+ * which opens the 24-hour window for follow-up messages.
  */
+
+/**
+ * Collects all consecutive message steps (skipping delays) until a condition
+ * step or end of flow. These messages must be sent as ONE combined DM since
+ * Instagram only allows one private reply per comment.
+ * 
+ * @param {Array} steps - The flow steps array
+ * @param {number} startIndex - Index to start collecting from
+ * @returns {{ messages: string[], nextActionIndex: number }}
+ */
+function collectMessagesUntilCondition(steps, startIndex) {
+  const messages = [];
+  let i = startIndex;
+
+  while (i < steps.length) {
+    const step = steps[i];
+
+    if (step.type === 'message') {
+      messages.push(step.text);
+      i++;
+    } else if (step.type === 'delay') {
+      // Skip delays — we can't actually delay between DMs without 
+      // the user replying first (Instagram API limitation)
+      i++;
+    } else if (step.type === 'condition') {
+      // Stop here — condition waits for user input
+      break;
+    } else {
+      i++;
+    }
+  }
+
+  return { messages, nextActionIndex: i };
+}
 
 /**
  * Advances a flow for a user.
@@ -19,9 +60,10 @@ const { replyToComment } = require('./instagram');
  * @param {string} params.accessToken - IG Access Token
  * @param {number} [params.stepIndex] - Optional index to jump to
  * @param {string} [params.commentId] - Optional comment ID for private replies
+ * @param {boolean} [params.isUserReply] - True if triggered by user DM reply (window is open)
  */
-async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = null, commentId = null }) {
-  console.log(`[FlowRunner] Advancing flow for ${commenterId} (campaign: ${campaignId}, stepIndex: ${stepIndex})`);
+async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = null, commentId = null, isUserReply = false }) {
+  console.log(`[FlowRunner] Advancing flow for ${commenterId} (campaign: ${campaignId}, stepIndex: ${stepIndex}, isUserReply: ${isUserReply})`);
 
   // 1. Fetch campaign and current state
   const { data: campaign, error: campErr } = await supabase
@@ -65,11 +107,67 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
 
   console.log(`[FlowRunner] Processing step ${currentIndex}: ${currentStep.type} (total steps: ${flow.steps.length})`);
 
-  // 3. Handle step types
+  // ═══════════════════════════════════════════════════════════════════════
+  // CASE 1: First trigger from comment (no user reply yet)
+  //         Must send ALL messages before first condition as ONE DM
+  // ═══════════════════════════════════════════════════════════════════════
+  if (currentIndex === 0 && !isUserReply) {
+    const { messages, nextActionIndex } = collectMessagesUntilCondition(flow.steps, 0);
+
+    if (messages.length === 0) {
+      console.warn(`[FlowRunner] No messages found in flow for campaign ${campaignId}`);
+      return;
+    }
+
+    // Combine all messages into one DM (separated by newlines)
+    const combinedMessage = messages.join('\n\n');
+    console.log(`[FlowRunner] 📦 Combining ${messages.length} message(s) into one DM (steps 0 to ${nextActionIndex - 1})`);
+
+    // Update flow state to the next action point
+    await supabase.from('user_flow_states').upsert({
+      commenter_id: commenterId,
+      campaign_id: campaignId,
+      current_step_index: nextActionIndex,
+      last_updated_at: new Date().toISOString()
+    }, { onConflict: 'commenter_id, campaign_id' });
+
+    // Send combined message as private reply
+    await enqueueDM({
+      commenterId,
+      dmMessage: combinedMessage,
+      type: currentStep.messageType || 'text_message',
+      campaignId: campaign.id,
+      accessToken,
+      commentId: commentId,  // Use comment_id for private reply
+      autoReply: false,
+      buttonTemplateData: currentStep.buttonTemplateData || null,
+      quickRepliesData: currentStep.quickRepliesData || null
+    });
+
+    // If next action is a condition, we stop and wait for user reply
+    if (nextActionIndex < flow.steps.length && flow.steps[nextActionIndex].type === 'condition') {
+      console.log(`[FlowRunner] ⏸️ Flow paused at condition step ${nextActionIndex}, waiting for user reply`);
+      return;
+    }
+
+    // If we've reached the end, clean up
+    if (nextActionIndex >= flow.steps.length) {
+      console.log(`[FlowRunner] ✅ Flow completed for ${commenterId} (all messages sent in one DM)`);
+      // State already points past the end, will be cleaned up on next check
+      return;
+    }
+
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CASE 2: User replied (condition matched) — 24h window is now OPEN
+  //         Can send individual messages with actual delays
+  // ═══════════════════════════════════════════════════════════════════════
   if (currentStep.type === 'message') {
     const nextIndex = currentIndex + 1;
 
-    // A. Update state BEFORE sending to avoid race conditions
+    // Update state
     await supabase.from('user_flow_states').upsert({
       commenter_id: commenterId,
       campaign_id: campaignId,
@@ -77,33 +175,32 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
 
-    console.log(`[FlowRunner] Message step: Enqueuing DM and moving to index ${nextIndex}`);
+    console.log(`[FlowRunner] Message step (window open): Sending DM, moving to index ${nextIndex}`);
 
-    // B. Send message
+    // Send message using recipient.id (window is open from user reply)
     await enqueueDM({
       commenterId,
       dmMessage: currentStep.text,
       type: currentStep.messageType || 'text_message',
       campaignId: campaign.id,
       accessToken,
-      commentId: currentIndex === 0 ? commentId : null,
-      // Auto-reply is handled in webhook.js now (BUG 3 FIX), don't duplicate
+      commentId: null,  // Don't use comment_id — use recipient.id
       autoReply: false,
       buttonTemplateData: currentStep.buttonTemplateData || null,
       quickRepliesData: currentStep.quickRepliesData || null
     });
 
-    // C. Move to next step automatically
-    return advanceFlow({ commenterId, campaignId, accessToken, stepIndex: nextIndex, commentId });
+    // Continue to next step
+    return advanceFlow({ commenterId, campaignId, accessToken, stepIndex: nextIndex, isUserReply: true });
 
   } else if (currentStep.type === 'delay') {
     const delayMs = calculateDelay(currentStep);
     const nextIndex = currentIndex + 1;
     const fireAt = new Date(Date.now() + delayMs).toISOString();
 
-    console.log(`[FlowRunner] Delay step: ${delayMs}ms delay, next step ${nextIndex}, fire_at: ${fireAt}`);
+    console.log(`[FlowRunner] Delay step (window open): ${delayMs}ms delay, fire_at: ${fireAt}`);
 
-    // Update flow state to the step AFTER the delay
+    // Update flow state
     await supabase.from('user_flow_states').upsert({
       commenter_id: commenterId,
       campaign_id: campaignId,
@@ -111,7 +208,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
 
-    // Store delay in Supabase — survives server restarts & Render spin-downs
+    // Store delay in Supabase for reliable execution
     const { error: delayErr } = await supabase.from('pending_delays').insert({
       commenter_id: commenterId,
       campaign_id: campaignId,
@@ -128,7 +225,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     }
 
   } else if (currentStep.type === 'condition') {
-    // Wait for user input. Save current index as the active step.
+    // Wait for user input
     console.log(`[FlowRunner] Condition step: Waiting for user input at index ${currentIndex}`);
     await supabase.from('user_flow_states').upsert({
       commenter_id: commenterId,
@@ -142,12 +239,10 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
 /**
  * Polls `pending_delays` table for any delays that are due.
  * Called on an interval from app.js.
- * This is the core reliability mechanism — survives server restarts.
  */
 async function processPendingDelays() {
   const now = new Date().toISOString();
 
-  // Fetch all pending delays that are due
   const { data: dueDelays, error } = await supabase
     .from('pending_delays')
     .select('*')
@@ -167,12 +262,12 @@ async function processPendingDelays() {
 
   for (const delay of dueDelays) {
     try {
-      // Mark as processing FIRST to prevent duplicate execution
+      // Mark as processing to prevent duplicates
       const { data: updated, error: updateErr } = await supabase
         .from('pending_delays')
         .update({ status: 'processing' })
         .eq('id', delay.id)
-        .eq('status', 'pending')  // Only update if still pending (prevents race)
+        .eq('status', 'pending')
         .select();
 
       if (updateErr || !updated || updated.length === 0) {
@@ -182,26 +277,23 @@ async function processPendingDelays() {
 
       console.log(`[DelayPoller] 🚀 Firing delay for ${delay.commenter_id} → step ${delay.next_step_index}`);
 
-      // Advance the flow
       await advanceFlow({
         commenterId: delay.commenter_id,
         campaignId: delay.campaign_id,
         accessToken: delay.access_token,
-        stepIndex: delay.next_step_index
+        stepIndex: delay.next_step_index,
+        isUserReply: true  // Delays only happen after user replied (window open)
       });
 
-      // Mark as completed
       await supabase
         .from('pending_delays')
         .update({ status: 'completed' })
         .eq('id', delay.id);
 
-      console.log(`[DelayPoller] ✅ Delay ${delay.id} completed for ${delay.commenter_id}`);
+      console.log(`[DelayPoller] ✅ Delay ${delay.id} completed`);
 
     } catch (err) {
       console.error(`[DelayPoller] ❌ Failed to process delay ${delay.id}:`, err.message);
-
-      // Mark as failed so we don't retry infinitely
       await supabase
         .from('pending_delays')
         .update({ status: 'failed' })
