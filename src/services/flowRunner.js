@@ -6,10 +6,9 @@ const { replyToComment } = require('./instagram');
  * flowRunner.js — Active Flow Execution Service
  * 
  * Handles advancing users through multi-step automation flows.
+ * Uses Supabase `pending_delays` table for reliable delay persistence
+ * (survives Render spin-downs and server restarts).
  */
-
-// Track active in-flight delays (prevents Render spin-down awareness)
-const activeDelays = new Set();
 
 /**
  * Advances a flow for a user.
@@ -100,10 +99,11 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
   } else if (currentStep.type === 'delay') {
     const delayMs = calculateDelay(currentStep);
     const nextIndex = currentIndex + 1;
+    const fireAt = new Date(Date.now() + delayMs).toISOString();
 
-    console.log(`[FlowRunner] Delay step: ${delayMs}ms delay, next step will be ${nextIndex}`);
+    console.log(`[FlowRunner] Delay step: ${delayMs}ms delay, next step ${nextIndex}, fire_at: ${fireAt}`);
 
-    // Update state to the step AFTER the delay
+    // Update flow state to the step AFTER the delay
     await supabase.from('user_flow_states').upsert({
       commenter_id: commenterId,
       campaign_id: campaignId,
@@ -111,24 +111,21 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
 
-    // FIX: Always use setTimeout for delays — Bull delayed jobs get lost when
-    // Render spins down the service. setTimeout is reliable on persistent servers
-    // for short delays (seconds to minutes).
-    console.log(`[FlowRunner] ⏱️ Setting ${delayMs}ms timer for ${commenterId}, will advance to step ${nextIndex}`);
-    
-    // Track active delays to prevent Render spin-down
-    activeDelays.add(commenterId);
-    
-    setTimeout(async () => {
-      try {
-        console.log(`[FlowRunner] ⏰ Delay fired for ${commenterId}, advancing to step ${nextIndex}`);
-        await advanceFlow({ commenterId, campaignId, accessToken, stepIndex: nextIndex });
-      } catch (err) {
-        console.error(`[FlowRunner] Delay advance failed for ${commenterId}:`, err.message);
-      } finally {
-        activeDelays.delete(commenterId);
-      }
-    }, delayMs);
+    // Store delay in Supabase — survives server restarts & Render spin-downs
+    const { error: delayErr } = await supabase.from('pending_delays').insert({
+      commenter_id: commenterId,
+      campaign_id: campaignId,
+      access_token: accessToken,
+      next_step_index: nextIndex,
+      fire_at: fireAt,
+      status: 'pending'
+    });
+
+    if (delayErr) {
+      console.error(`[FlowRunner] ❌ Failed to store pending delay:`, delayErr.message);
+    } else {
+      console.log(`[FlowRunner] ✅ Delay stored in DB. Will fire at ${fireAt}`);
+    }
 
   } else if (currentStep.type === 'condition') {
     // Wait for user input. Save current index as the active step.
@@ -139,6 +136,77 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       current_step_index: currentIndex,
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
+  }
+}
+
+/**
+ * Polls `pending_delays` table for any delays that are due.
+ * Called on an interval from app.js.
+ * This is the core reliability mechanism — survives server restarts.
+ */
+async function processPendingDelays() {
+  const now = new Date().toISOString();
+
+  // Fetch all pending delays that are due
+  const { data: dueDelays, error } = await supabase
+    .from('pending_delays')
+    .select('*')
+    .eq('status', 'pending')
+    .lte('fire_at', now)
+    .order('fire_at', { ascending: true })
+    .limit(20);
+
+  if (error) {
+    console.error('[DelayPoller] ❌ Error fetching pending delays:', error.message);
+    return;
+  }
+
+  if (!dueDelays || dueDelays.length === 0) return;
+
+  console.log(`[DelayPoller] ⏰ Found ${dueDelays.length} due delay(s), processing...`);
+
+  for (const delay of dueDelays) {
+    try {
+      // Mark as processing FIRST to prevent duplicate execution
+      const { data: updated, error: updateErr } = await supabase
+        .from('pending_delays')
+        .update({ status: 'processing' })
+        .eq('id', delay.id)
+        .eq('status', 'pending')  // Only update if still pending (prevents race)
+        .select();
+
+      if (updateErr || !updated || updated.length === 0) {
+        console.log(`[DelayPoller] Skipping delay ${delay.id} — already picked up`);
+        continue;
+      }
+
+      console.log(`[DelayPoller] 🚀 Firing delay for ${delay.commenter_id} → step ${delay.next_step_index}`);
+
+      // Advance the flow
+      await advanceFlow({
+        commenterId: delay.commenter_id,
+        campaignId: delay.campaign_id,
+        accessToken: delay.access_token,
+        stepIndex: delay.next_step_index
+      });
+
+      // Mark as completed
+      await supabase
+        .from('pending_delays')
+        .update({ status: 'completed' })
+        .eq('id', delay.id);
+
+      console.log(`[DelayPoller] ✅ Delay ${delay.id} completed for ${delay.commenter_id}`);
+
+    } catch (err) {
+      console.error(`[DelayPoller] ❌ Failed to process delay ${delay.id}:`, err.message);
+
+      // Mark as failed so we don't retry infinitely
+      await supabase
+        .from('pending_delays')
+        .update({ status: 'failed' })
+        .eq('id', delay.id);
+    }
   }
 }
 
@@ -157,4 +225,4 @@ function calculateDelay(step) {
   }
 }
 
-module.exports = { advanceFlow, activeDelays };
+module.exports = { advanceFlow, processPendingDelays };

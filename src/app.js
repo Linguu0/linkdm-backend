@@ -7,7 +7,7 @@ const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
-const { activeDelays } = require('./services/flowRunner');
+const { processPendingDelays } = require('./services/flowRunner');
 
 
 // ---------------------------------------------------------------------------
@@ -59,9 +59,8 @@ app.get('/', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'LinkDM Backend',
-    version: '2.2.0',
+    version: '2.3.0',
     timestamp: new Date().toISOString(),
-    activeDelays: activeDelays.size,
   });
 });
 
@@ -90,17 +89,31 @@ if (require.main === module) {
     console.log('═══════════════════════════════════════════');
   });
 
+  // -----------------------------------------------------------------------
+  // Delay Poller — checks pending_delays table every 10 seconds
+  // This is the CORE reliability mechanism. Delays are stored in Supabase
+  // and polled here, so they survive Render spin-downs & server restarts.
+  // -----------------------------------------------------------------------
+  const POLL_INTERVAL = 10 * 1000; // 10 seconds
+  setInterval(async () => {
+    try {
+      await processPendingDelays();
+    } catch (err) {
+      console.error('[DelayPoller] ❌ Unhandled error:', err.message);
+    }
+  }, POLL_INTERVAL);
+  console.log(`⏱️  Delay poller started (every ${POLL_INTERVAL / 1000}s)`);
+
   // Keep-alive self-ping — prevents Render free tier from spinning down
-  // while flow delays are pending. Pings every 10 minutes.
   const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   setInterval(async () => {
-    if (activeDelays.size > 0) {
-      console.log(`[KeepAlive] ${activeDelays.size} active delay(s), pinging self...`);
-      try {
-        const http = require('http');
-        http.get(`${RENDER_URL}/`, () => {});
-      } catch (e) { /* ignore */ }
-    }
+    console.log(`[KeepAlive] Pinging self to stay alive...`);
+    try {
+      const http = require('http');
+      const https = require('https');
+      const client = RENDER_URL.startsWith('https') ? https : http;
+      client.get(`${RENDER_URL}/`, () => {});
+    } catch (e) { /* ignore */ }
   }, 10 * 60 * 1000); // Every 10 minutes
 
   // Handle server errors (like EADDRINUSE)
