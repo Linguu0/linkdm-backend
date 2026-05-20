@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
+const { activeDelays } = require('./services/flowRunner');
 
 
 // ---------------------------------------------------------------------------
@@ -58,8 +59,9 @@ app.get('/', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'LinkDM Backend',
-    version: '2.1.0',
+    version: '2.2.0',
     timestamp: new Date().toISOString(),
+    activeDelays: activeDelays.size,
   });
 });
 
@@ -87,6 +89,19 @@ if (require.main === module) {
     console.log(`  🚀 LinkDM Backend is LIVE on port ${PORT}`);
     console.log('═══════════════════════════════════════════');
   });
+
+  // Keep-alive self-ping — prevents Render free tier from spinning down
+  // while flow delays are pending. Pings every 10 minutes.
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  setInterval(async () => {
+    if (activeDelays.size > 0) {
+      console.log(`[KeepAlive] ${activeDelays.size} active delay(s), pinging self...`);
+      try {
+        const http = require('http');
+        http.get(`${RENDER_URL}/`, () => {});
+      } catch (e) { /* ignore */ }
+    }
+  }, 10 * 60 * 1000); // Every 10 minutes
 
   // Handle server errors (like EADDRINUSE)
   server.on('error', (err) => {

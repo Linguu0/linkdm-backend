@@ -8,6 +8,9 @@ const { replyToComment } = require('./instagram');
  * Handles advancing users through multi-step automation flows.
  */
 
+// Track active in-flight delays (prevents Render spin-down awareness)
+const activeDelays = new Set();
+
 /**
  * Advances a flow for a user.
  * 
@@ -108,29 +111,24 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
 
-    // BUG 2 FIX: Try queue first, fall back to inline setTimeout
-    try {
-      await enqueueDM({
-        commenterId,
-        dmMessage: '',
-        type: 'flow_advance',
-        campaignId: campaignId,
-        accessToken,
-        delay: delayMs
-      });
-      console.log(`[FlowRunner] Delay job enqueued for ${delayMs}ms`);
-    } catch (queueErr) {
-      console.warn(`[FlowRunner] Queue unavailable, using inline delay: ${queueErr.message}`);
-      // Inline fallback — use setTimeout to advance after delay
-      setTimeout(async () => {
-        try {
-          console.log(`[FlowRunner] Inline delay fired for ${commenterId}, advancing to step ${nextIndex}`);
-          await advanceFlow({ commenterId, campaignId, accessToken, stepIndex: nextIndex });
-        } catch (err) {
-          console.error(`[FlowRunner] Inline delay advance failed:`, err.message);
-        }
-      }, delayMs);
-    }
+    // FIX: Always use setTimeout for delays — Bull delayed jobs get lost when
+    // Render spins down the service. setTimeout is reliable on persistent servers
+    // for short delays (seconds to minutes).
+    console.log(`[FlowRunner] ⏱️ Setting ${delayMs}ms timer for ${commenterId}, will advance to step ${nextIndex}`);
+    
+    // Track active delays to prevent Render spin-down
+    activeDelays.add(commenterId);
+    
+    setTimeout(async () => {
+      try {
+        console.log(`[FlowRunner] ⏰ Delay fired for ${commenterId}, advancing to step ${nextIndex}`);
+        await advanceFlow({ commenterId, campaignId, accessToken, stepIndex: nextIndex });
+      } catch (err) {
+        console.error(`[FlowRunner] Delay advance failed for ${commenterId}:`, err.message);
+      } finally {
+        activeDelays.delete(commenterId);
+      }
+    }, delayMs);
 
   } else if (currentStep.type === 'condition') {
     // Wait for user input. Save current index as the active step.
@@ -159,4 +157,4 @@ function calculateDelay(step) {
   }
 }
 
-module.exports = { advanceFlow };
+module.exports = { advanceFlow, activeDelays };
