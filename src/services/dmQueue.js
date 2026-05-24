@@ -138,7 +138,10 @@ if (dmQueue) {
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
 async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, buttonTemplateData, quickRepliesData, delay = 0 }) {
-  if (!dmQueue) {
+  // FORCE BYPASS: Bull queue might be stuck or out of Redis limits.
+  // We send directly to ensure it processes and logs immediately.
+  if (true || !dmQueue) {
+    console.warn('⚠️ Sending DM directly (bypassing Bull queue)');
     console.warn('⚠️ Bull queue not initialized, sending DM directly (no delay support)');
     // Fallback to direct send
     try {
