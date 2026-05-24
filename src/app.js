@@ -2,13 +2,74 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 
 const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
 const { processPendingDelays } = require('./services/flowRunner');
+const supabase = require('./db/supabase');
 
+// ---------------------------------------------------------------------------
+// One-time migration: resolve any shortcode target_media_ids to numeric IDs
+// ---------------------------------------------------------------------------
+async function migrateShortcodes() {
+  console.log('[Migration] 🔍 Checking for campaigns with shortcode target_media_ids...');
+
+  const { data: campaigns, error } = await supabase
+    .from('campaigns')
+    .select('id, target_media_id, target_thumbnail, access_token')
+    .eq('target_type', 'specific_post')
+    .not('target_media_id', 'is', null);
+
+  if (error) {
+    console.error('[Migration] ❌ Failed to fetch campaigns:', error.message);
+    return;
+  }
+
+  // Filter to only campaigns with non-numeric target_media_id (shortcodes)
+  const toFix = (campaigns || []).filter(c => c.target_media_id && !/^\d+$/.test(c.target_media_id));
+
+  if (toFix.length === 0) {
+    console.log('[Migration] ✅ All campaigns already have numeric media IDs. Nothing to fix.');
+    return;
+  }
+
+  console.log(`[Migration] ⚠️ Found ${toFix.length} campaign(s) with shortcode IDs. Resolving...`);
+
+  for (const campaign of toFix) {
+    const token = campaign.access_token || process.env.ACCESS_TOKEN;
+    if (!token) {
+      console.log(`[Migration] ⏭️ Skipping campaign ${campaign.id} — no access token`);
+      continue;
+    }
+
+    try {
+      const res = await axios.get(
+        `https://graph.instagram.com/v21.0/me/media?fields=id,permalink,thumbnail_url,media_type,timestamp&access_token=${token}`
+      );
+
+      const match = res.data.data?.find(m => m.permalink && m.permalink.includes(campaign.target_media_id));
+
+      if (match) {
+        const updates = { target_media_id: match.id };
+        if (!campaign.target_thumbnail && match.thumbnail_url) {
+          updates.target_thumbnail = match.thumbnail_url;
+        }
+
+        await supabase.from('campaigns').update(updates).eq('id', campaign.id);
+        console.log(`[Migration] ✅ Campaign ${campaign.id}: ${campaign.target_media_id} → ${match.id}`);
+      } else {
+        console.log(`[Migration] ⚠️ Campaign ${campaign.id}: could not resolve "${campaign.target_media_id}" (post may be too old for recent media)`);
+      }
+    } catch (err) {
+      console.error(`[Migration] ❌ Campaign ${campaign.id}: API error — ${err.message}`);
+    }
+  }
+
+  console.log('[Migration] 🏁 Shortcode migration complete.');
+}
 
 // ---------------------------------------------------------------------------
 // Express App
@@ -87,6 +148,11 @@ if (require.main === module) {
     console.log('═══════════════════════════════════════════');
     console.log(`  🚀 LinkDM Backend is LIVE on port ${PORT}`);
     console.log('═══════════════════════════════════════════');
+
+    // Run one-time migration to fix any old shortcode target_media_ids
+    migrateShortcodes().catch(err => {
+      console.error('[Migration] ❌ Shortcode migration failed:', err.message);
+    });
   });
 
   // -----------------------------------------------------------------------
