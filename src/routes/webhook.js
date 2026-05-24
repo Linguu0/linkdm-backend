@@ -292,10 +292,11 @@ router.post('/instagram', async (req, res) => {
           if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
             console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
 
+            const campaignToken = campaign.access_token || accessToken;
+
             // BUG 3 FIX: Auto-reply to comment for flow_builder campaigns too
             if (campaign.auto_comment_reply !== false && commentId) {
               try {
-                const campaignToken = campaign.access_token || accessToken;
                 await replyToComment(campaignToken, commentId, 'Check your DMs! 📩');
                 console.log(`✅ Auto-replied to comment ${commentId} for flow campaign`);
               } catch (replyErr) {
@@ -306,7 +307,7 @@ router.post('/instagram', async (req, res) => {
             await advanceFlow({
               commenterId,
               campaignId: campaign.id,
-              accessToken,
+              accessToken: campaignToken,
               commentId,
               stepIndex: 0
             });
@@ -314,13 +315,14 @@ router.post('/instagram', async (req, res) => {
           }
 
           // Default single DM handling
+          const campaignToken = campaign.access_token || accessToken;
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
             dmMessage: campaign.dm_message,
             type: campaign.dm_type || 'text_message',
             campaignId: campaign.id,
-            accessToken,
+            accessToken: campaignToken,
             commentId,
             autoReply: campaign.auto_comment_reply !== false,
             buttonTemplateData: campaign.button_template_data,
