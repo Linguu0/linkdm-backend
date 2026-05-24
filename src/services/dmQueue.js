@@ -23,26 +23,30 @@ function createRedisClient() {
 
 let dmQueue = null;
 
-try {
-  dmQueue = new Queue('dm-queue', {
-    createClient: (type) => createRedisClient(),
-    limiter: {
-      max: 10,
-      duration: 60000,
-    },
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000,
+if (!redisUrl) {
+  console.warn('⚠️ REDIS_URL not set — Bull queue disabled, DMs will be sent directly');
+} else {
+  try {
+    dmQueue = new Queue('dm-queue', {
+      createClient: (type) => createRedisClient(),
+      limiter: {
+        max: 10,
+        duration: 60000,
       },
-      removeOnComplete: true,
-      removeOnFail: false,
-    },
-  });
-  console.log('✅ Bull DM queue initialized');
-} catch (err) {
-  console.error('❌ Failed to initialize Bull queue:', err.message);
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    });
+    console.log('✅ Bull DM queue initialized');
+  } catch (err) {
+    console.error('❌ Failed to initialize Bull queue:', err.message);
+  }
 }
 
 if (dmQueue) {

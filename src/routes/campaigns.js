@@ -114,10 +114,23 @@ router.post('/', async (req, res) => {
     // If target_media_id is a shortcode, try to resolve it (best effort)
     if (payload.target_media_id && !/^\d+$/.test(payload.target_media_id)) {
       console.log(`🔍 Attempting to resolve shortcode ${payload.target_media_id} to numeric ID...`);
-      // We'll keep the shortcode for now, but in a real production app, 
-      // we'd use the Graph API to resolve it. 
-      // For this implementation, we'll rely on the 'Ready to Setup' grid 
-      // which already provides numeric IDs.
+      try {
+        const recentRes = await axios.get(
+          `https://graph.instagram.com/v21.0/me/media?fields=id,permalink,thumbnail_url,media_type,timestamp&access_token=${accessToken}`
+        );
+        const match = recentRes.data.data?.find(m => m.permalink && m.permalink.includes(payload.target_media_id));
+        if (match) {
+          console.log(`✅ Resolved shortcode ${payload.target_media_id} to numeric ID ${match.id}`);
+          payload.target_media_id = match.id;
+          if (!payload.target_thumbnail && match.thumbnail_url) {
+            payload.target_thumbnail = match.thumbnail_url;
+          }
+        } else {
+          console.log(`⚠️ Could not resolve shortcode ${payload.target_media_id}`);
+        }
+      } catch (err) {
+        console.error('❌ Failed to resolve shortcode:', err.message);
+      }
     }
 
     const { data, error } = await supabase
@@ -160,6 +173,31 @@ router.patch('/:id', async (req, res) => {
     }
 
     updates.updated_at = new Date().toISOString();
+
+    if (updates.target_media_id && !/^\d+$/.test(updates.target_media_id)) {
+      console.log(`🔍 Attempting to resolve shortcode ${updates.target_media_id} to numeric ID...`);
+      try {
+        // Find access token for this campaign
+        const { data: campData } = await supabase.from('campaigns').select('access_token').eq('id', id).single();
+        const accessToken = campData?.access_token || process.env.ACCESS_TOKEN;
+        
+        if (accessToken) {
+          const recentRes = await axios.get(
+            `https://graph.instagram.com/v21.0/me/media?fields=id,permalink,thumbnail_url,media_type,timestamp&access_token=${accessToken}`
+          );
+          const match = recentRes.data.data?.find(m => m.permalink && m.permalink.includes(updates.target_media_id));
+          if (match) {
+            console.log(`✅ Resolved shortcode ${updates.target_media_id} to numeric ID ${match.id}`);
+            updates.target_media_id = match.id;
+            if (!updates.target_thumbnail && match.thumbnail_url) {
+              updates.target_thumbnail = match.thumbnail_url;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('❌ Failed to resolve shortcode in PATCH:', err.message);
+      }
+    }
 
     const { data, error } = await supabase
       .from('campaigns')
