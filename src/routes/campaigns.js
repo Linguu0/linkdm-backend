@@ -172,8 +172,6 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
-    updates.updated_at = new Date().toISOString();
-
     if (updates.target_media_id && !/^\d+$/.test(updates.target_media_id)) {
       console.log(`🔍 Attempting to resolve shortcode ${updates.target_media_id} to numeric ID...`);
       try {
