@@ -172,10 +172,13 @@ async function replyToComment(accessToken, commentId, messageText) {
 /**
  * Check if a user follows the Instagram page.
  *
- * Uses GET /me/followers?user_id={commenter_id}
- * - If API returns data with the user → true (is follower)
- * - If API returns valid empty data → false (not a follower)
- * - If API call fails entirely → true (fail-open, log error for debugging)
+ * Uses GET /{commenter_id}?fields=is_user_follow_business
+ * This field is available on the Instagram Graph API and tells us
+ * directly if the user follows the business/creator account.
+ *
+ * - If is_user_follow_business === true → user follows → return true
+ * - If is_user_follow_business === false → user doesn't follow → return false
+ * - If API fails → fail-open (return true), log error for debugging
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} userId – IGSID of the user to check
@@ -183,29 +186,28 @@ async function replyToComment(accessToken, commentId, messageText) {
  */
 async function isFollower(accessToken, userId) {
   try {
-    const url = `${FB_GRAPH_URL}/me/followers?user_id=${userId}`;
-    console.log(`👤 Checking follower status: GET ${url.replace(accessToken, '[HIDDEN]')}`);
+    const url = `${GRAPH_URL}/${userId}`;
+    console.log(`👤 Checking follower status: GET ${url}?fields=is_user_follow_business`);
 
     const response = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+      params: {
+        fields: 'is_user_follow_business',
+        access_token: accessToken,
       },
       timeout: 10000,
     });
 
     console.log(`👤 Follower API response:`, JSON.stringify(response.data));
 
-    const followers = response.data?.data;
+    const followsYou = response.data?.is_user_follow_business;
     
-    // Valid response — check if user is in the list
-    if (Array.isArray(followers)) {
-      const found = followers.some(f => f.id === userId);
-      console.log(`👤 Result for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'} (${followers.length} result(s))`);
-      return found;
+    if (typeof followsYou === 'boolean') {
+      console.log(`👤 Result for ${userId}: ${followsYou ? '✅ IS follower' : '❌ NOT a follower'}`);
+      return followsYou;
     }
 
-    // Unexpected response shape — fail-open
-    console.warn(`⚠️ Unexpected follower API response shape, allowing DM:`, JSON.stringify(response.data));
+    // Field not returned — fail-open
+    console.warn(`⚠️ is_user_follow_business not in response, allowing DM:`, JSON.stringify(response.data));
     return true;
   } catch (err) {
     const errMsg = err.response?.data?.error?.message || err.message;
