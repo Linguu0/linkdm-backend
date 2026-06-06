@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const { matchesKeyword } = require('../services/matcher');
 const { enqueueDM } = require('../services/dmQueue');
 const { advanceFlow } = require('../services/flowRunner');
-const { replyToComment } = require('../services/instagram');
+const { replyToComment, isFollower } = require('../services/instagram');
 
 // ---------------------------------------------------------------------------
 // GET /webhook/instagram — Meta webhook verification (challenge handshake)
@@ -262,6 +262,16 @@ router.post('/instagram', async (req, res) => {
           }
 
           console.log(`✅ Keyword match! Campaign "${campaign.name}"`);
+
+          // --- Followers Only Filter ---
+          if (campaign.followers_only) {
+            const campaignToken = campaign.access_token || accessToken;
+            const follows = await isFollower(campaignToken, commenterId);
+            if (!follows) {
+              console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a follower (followers_only=true)`);
+              continue;
+            }
+          }
 
           // --- Send Once Per User Check (BUG 1 FIX: exclude debug logs) ---
           let shouldSkip = false;

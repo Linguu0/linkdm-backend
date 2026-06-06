@@ -52,6 +52,7 @@ router.post('/', async (req, res) => {
       exclude_mentions,
       auto_comment_reply,
       flow_data,
+      followers_only,
     } = req.body;
 
     const userId = ig_user_id || process.env.IG_USER_ID || '17841462923731141';
@@ -109,6 +110,7 @@ router.post('/', async (req, res) => {
       target_media_id: req.body.target_media_id || null,
       target_thumbnail: req.body.target_thumbnail || null,
       flow_data: flow_data || null,
+      followers_only: followers_only !== undefined ? followers_only : false,
     };
 
     // If target_media_id is a shortcode, try to resolve it (best effort)

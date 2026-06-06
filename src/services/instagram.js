@@ -169,9 +169,44 @@ async function replyToComment(accessToken, commentId, messageText) {
   }
 }
 
+/**
+ * Check if a user follows the Instagram page.
+ *
+ * Uses the GET /me/followers endpoint with a user_id filter.
+ * Returns true if the user is found in the follower list,
+ * false otherwise. On API errors, defaults to true (fail-open)
+ * to avoid blocking DMs due to transient issues.
+ *
+ * @param {string} accessToken – Page/user access token
+ * @param {string} userId – IGSID of the user to check
+ * @returns {Promise<boolean>}
+ */
+async function isFollower(accessToken, userId) {
+  try {
+    const url = `${GRAPH_URL}/me/followers`;
+    const response = await axios.get(url, {
+      params: {
+        user_id: userId,
+        access_token: accessToken,
+      },
+      timeout: 10000,
+    });
+
+    const followers = response.data?.data || [];
+    const found = followers.some(f => f.id === userId);
+    console.log(`👤 Follower check for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'}`);
+    return found;
+  } catch (err) {
+    console.error(`⚠️ Follower check failed for ${userId}:`, err.response?.data?.error?.message || err.message);
+    // Fail-open: if the API call fails, allow the DM to go through
+    return true;
+  }
+}
+
 module.exports = {
   sendDirectMessage,
   exchangeCodeForToken,
   exchangeForLongLivedToken,
   replyToComment,
+  isFollower,
 };
