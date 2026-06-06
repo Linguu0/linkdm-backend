@@ -174,8 +174,8 @@ async function replyToComment(accessToken, commentId, messageText) {
  *
  * Uses the GET /me/followers endpoint with a user_id filter.
  * Returns true if the user is found in the follower list,
- * false otherwise. On API errors, defaults to true (fail-open)
- * to avoid blocking DMs due to transient issues.
+ * false otherwise. On API errors, defaults to false (fail-closed)
+ * so DMs are NOT sent to non-verified users.
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} userId – IGSID of the user to check
@@ -184,6 +184,8 @@ async function replyToComment(accessToken, commentId, messageText) {
 async function isFollower(accessToken, userId) {
   try {
     const url = `${GRAPH_URL}/me/followers`;
+    console.log(`👤 Checking if ${userId} is a follower via ${url}?user_id=${userId}`);
+
     const response = await axios.get(url, {
       params: {
         user_id: userId,
@@ -192,14 +194,19 @@ async function isFollower(accessToken, userId) {
       timeout: 10000,
     });
 
+    console.log(`👤 Follower API raw response:`, JSON.stringify(response.data));
+
     const followers = response.data?.data || [];
     const found = followers.some(f => f.id === userId);
-    console.log(`👤 Follower check for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'}`);
+    console.log(`👤 Follower check for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'} (${followers.length} result(s))`);
     return found;
   } catch (err) {
-    console.error(`⚠️ Follower check failed for ${userId}:`, err.response?.data?.error?.message || err.message);
-    // Fail-open: if the API call fails, allow the DM to go through
-    return true;
+    const errMsg = err.response?.data?.error?.message || err.message;
+    const errCode = err.response?.data?.error?.code;
+    console.error(`❌ Follower check FAILED for ${userId}: [code=${errCode}] ${errMsg}`);
+    console.error(`❌ Full error response:`, JSON.stringify(err.response?.data || {}));
+    // Fail-closed: if the API call fails, do NOT send the DM
+    return false;
   }
 }
 
