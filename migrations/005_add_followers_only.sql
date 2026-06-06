@@ -1,6 +1,9 @@
 -- ═══════════════════════════════════════
--- Migration: Add followers_only filter to campaigns
+-- Migration: Make followers_only always TRUE
 -- ═══════════════════════════════════════
 
-ALTER TABLE campaigns 
-ADD COLUMN IF NOT EXISTS followers_only BOOLEAN DEFAULT false;
+-- Update all existing campaigns
+UPDATE campaigns SET followers_only = true;
+
+-- Change default for future campaigns
+ALTER TABLE campaigns ALTER COLUMN followers_only SET DEFAULT true;
