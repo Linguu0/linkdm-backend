@@ -300,7 +300,7 @@ router.post('/instagram', async (req, res) => {
           if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
             console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
 
-            const campaignToken = campaign.access_token || accessToken;
+
 
             // BUG 3 FIX: Auto-reply to comment for flow_builder campaigns too
             if (campaign.auto_comment_reply !== false && commentId) {
@@ -323,7 +323,7 @@ router.post('/instagram', async (req, res) => {
           }
 
           // Default single DM handling
-          const campaignToken = campaign.access_token || accessToken;
+
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
