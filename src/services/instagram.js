@@ -183,7 +183,7 @@ async function replyToComment(accessToken, commentId, messageText) {
  */
 async function isFollower(accessToken, userId) {
   try {
-    const url = `${GRAPH_URL}/me/followers?user_id=${userId}`;
+    const url = `${FB_GRAPH_URL}/me/followers?user_id=${userId}`;
     console.log(`👤 Checking follower status: GET ${url.replace(accessToken, '[HIDDEN]')}`);
 
     const response = await axios.get(url, {
