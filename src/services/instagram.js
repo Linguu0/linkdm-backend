@@ -172,10 +172,10 @@ async function replyToComment(accessToken, commentId, messageText) {
 /**
  * Check if a user follows the Instagram page.
  *
- * Uses the GET /me/followers endpoint with a user_id filter.
- * Returns true if the user is found in the follower list,
- * false otherwise. On API errors, defaults to false (fail-closed)
- * so DMs are NOT sent to non-verified users.
+ * Uses GET /me/followers?user_id={commenter_id}
+ * - If API returns data with the user → true (is follower)
+ * - If API returns valid empty data → false (not a follower)
+ * - If API call fails entirely → true (fail-open, log error for debugging)
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} userId – IGSID of the user to check
@@ -183,30 +183,38 @@ async function replyToComment(accessToken, commentId, messageText) {
  */
 async function isFollower(accessToken, userId) {
   try {
-    const url = `${GRAPH_URL}/me/followers`;
-    console.log(`👤 Checking if ${userId} is a follower via ${url}?user_id=${userId}`);
+    const url = `${GRAPH_URL}/me/followers?user_id=${userId}`;
+    console.log(`👤 Checking follower status: GET ${url.replace(accessToken, '[HIDDEN]')}`);
 
     const response = await axios.get(url, {
-      params: {
-        user_id: userId,
-        access_token: accessToken,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
       },
       timeout: 10000,
     });
 
-    console.log(`👤 Follower API raw response:`, JSON.stringify(response.data));
+    console.log(`👤 Follower API response:`, JSON.stringify(response.data));
 
-    const followers = response.data?.data || [];
-    const found = followers.some(f => f.id === userId);
-    console.log(`👤 Follower check for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'} (${followers.length} result(s))`);
-    return found;
+    const followers = response.data?.data;
+    
+    // Valid response — check if user is in the list
+    if (Array.isArray(followers)) {
+      const found = followers.some(f => f.id === userId);
+      console.log(`👤 Result for ${userId}: ${found ? '✅ IS follower' : '❌ NOT a follower'} (${followers.length} result(s))`);
+      return found;
+    }
+
+    // Unexpected response shape — fail-open
+    console.warn(`⚠️ Unexpected follower API response shape, allowing DM:`, JSON.stringify(response.data));
+    return true;
   } catch (err) {
     const errMsg = err.response?.data?.error?.message || err.message;
     const errCode = err.response?.data?.error?.code;
-    console.error(`❌ Follower check FAILED for ${userId}: [code=${errCode}] ${errMsg}`);
-    console.error(`❌ Full error response:`, JSON.stringify(err.response?.data || {}));
-    // Fail-closed: if the API call fails, do NOT send the DM
-    return false;
+    const httpStatus = err.response?.status;
+    console.error(`❌ Follower check FAILED for ${userId}: HTTP ${httpStatus} [code=${errCode}] ${errMsg}`);
+    console.error(`❌ Full error:`, JSON.stringify(err.response?.data || {}));
+    // Fail-open: API error → still send DM (we can't confirm they're NOT a follower)
+    return true;
   }
 }
 
