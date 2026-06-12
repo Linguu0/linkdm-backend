@@ -16,7 +16,8 @@ router.get('/instagram', (req, res) => {
 
     const authUrl =
       `https://www.instagram.com/oauth/authorize` +
-      `?client_id=${process.env.IG_APP_ID}` +
+      `?enable_fb_login=0&force_authentication=1` +
+      `&client_id=${process.env.IG_APP_ID}` +
       `&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}` +
       `&scope=${scopes}` +
       `&response_type=code`;
