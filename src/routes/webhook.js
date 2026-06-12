@@ -90,50 +90,94 @@ router.post('/instagram', async (req, res) => {
             const currentIndex = state.current_step_index;
             const currentStep = flow.steps[currentIndex];
 
-            if (!currentStep || currentStep.type !== 'condition') continue;
+            // If flow is past the end or no step exists, clean up
+            if (!currentStep) {
+              await supabase.from('user_flow_states').delete()
+                .eq('commenter_id', senderId)
+                .eq('campaign_id', campaign.id);
+              continue;
+            }
 
-            console.log(`🔎 Checking condition for campaign "${campaign.name}" at step ${currentIndex}`);
+            const campaignToken = campaign.access_token || process.env.ACCESS_TOKEN;
 
-            const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-            const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
+            // --- CONDITION STEP: check keyword match ---
+            if (currentStep.type === 'condition') {
+              console.log(`🔎 Checking condition for campaign "${campaign.name}" at step ${currentIndex}`);
 
-            if (isMatch) {
+              const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+              const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
+
+              if (!isMatch) continue;
+
               console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
-              
-              // --- Followers Only Check (RELIABLE here — user has messaged us, consent exists) ---
-              const campaignToken = campaign.access_token || process.env.ACCESS_TOKEN;
+            }
+            // --- NON-CONDITION STEP: any reply should try to advance ---
+            // This handles the case where user was gated (follow prompt sent),
+            // user followed and replied again. The state still points to the 
+            // same step, so we just need to re-check follow status and advance.
+            else if (currentStep.type === 'message' || currentStep.type === 'delay') {
+              console.log(`🔄 User replied while flow paused at ${currentStep.type} step ${currentIndex} for "${campaign.name}" — re-checking follow gate`);
+            } else {
+              continue;
+            }
+
+            // --- Follower Check (reliable here — user has DM'd us) ---
+            if (campaign.followers_only !== false) {
               const followerResult = await isFollower(campaignToken, senderId);
               
               if (followerResult.status === 'no') {
-                // Confirmed non-follower → stop the flow, send follow prompt
-                console.log(`⏭️ User ${senderId} is NOT a follower — stopping flow, sending follow prompt`);
-                try {
-                  const { sendDirectMessage } = require('../services/instagram');
-                  await sendDirectMessage(
-                    campaignToken, senderId,
-                    '👋 Hey! To unlock the full content, please follow our account first. Once you follow, reply again and we\'ll send it! 📩',
-                    'text_message'
-                  );
-                } catch (e) {
-                  console.warn(`⚠️ Failed to send follow prompt:`, e.message);
-                }
-                // Clean up flow state — don't advance
-                await supabase.from('user_flow_states').delete()
+                // Non-follower → send follow prompt BUT keep flow state alive!
+                // Check cooldown: don't spam follow prompt if sent recently
+                const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+                const { data: recentPrompts } = await supabase
+                  .from('dm_logs')
+                  .select('id')
                   .eq('commenter_id', senderId)
-                  .eq('campaign_id', campaign.id);
+                  .eq('campaign_id', campaign.id)
+                  .eq('status', 'follow_gate')
+                  .gte('sent_at', fiveMinAgo)
+                  .limit(1);
+
+                if (!recentPrompts || recentPrompts.length === 0) {
+                  console.log(`⏭️ User ${senderId} is NOT a follower — sending follow prompt (keeping flow state)`);
+                  try {
+                    const { sendDirectMessage } = require('../services/instagram');
+                    await sendDirectMessage(
+                      campaignToken, senderId,
+                      '👋 Hey! To unlock the full content, please follow our account first. Once you follow, reply again and we\'ll send it! 📩',
+                      'text_message'
+                    );
+                    // Log the follow gate so we can track + cooldown
+                    await supabase.from('dm_logs').insert({
+                      campaign_id: campaign.id,
+                      commenter_id: senderId,
+                      dm_message: 'Follow gate prompt sent',
+                      status: 'follow_gate',
+                      sent_at: new Date().toISOString(),
+                    });
+                  } catch (e) {
+                    console.warn(`⚠️ Failed to send follow prompt:`, e.message);
+                  }
+                } else {
+                  console.log(`⏭️ User ${senderId} is NOT a follower — follow prompt already sent recently, skipping`);
+                }
+                // DO NOT delete flow state — user can retry after following
                 break;
               }
               
               console.log(`✅ User ${senderId} follower check passed (status: ${followerResult.status}) — advancing flow`);
-              await advanceFlow({
-                commenterId: senderId,
-                campaignId: campaign.id,
-                accessToken: campaignToken,
-                stepIndex: currentIndex + 1,
-                isUserReply: true  // User replied → 24h window is open
-              });
-              break;
             }
+
+            // --- Advance the flow ---
+            const nextStep = currentStep.type === 'condition' ? currentIndex + 1 : currentIndex;
+            await advanceFlow({
+              commenterId: senderId,
+              campaignId: campaign.id,
+              accessToken: campaignToken,
+              stepIndex: nextStep,
+              isUserReply: true  // User replied → 24h window is open
+            });
+            break;
           }
         }
       }
