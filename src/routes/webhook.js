@@ -313,9 +313,10 @@ router.post('/instagram', async (req, res) => {
 
           if (shouldSkip) continue;
 
-          // --- Page Health: Per-Hour Rate Limiter ---
-          // Prevent sending too many DMs in a short window (Instagram flags this as spam)
-          const MAX_DMS_PER_HOUR = 20;
+          // --- Page Health: Adaptive Pacing ---
+          // Instead of dropping DMs when busy, we slow down the sending pace.
+          // Instagram allows ~750 API calls/hour, but natural pacing is key.
+          // Normal: 2-6s delay. High volume (50+ in last hour): 8-15s delay.
           const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
           const { data: recentDMs } = await supabase
             .from('dm_logs')
@@ -323,15 +324,17 @@ router.post('/instagram', async (req, res) => {
             .eq('status', 'sent')
             .gte('sent_at', oneHourAgo);
 
-          if (recentDMs && recentDMs.length >= MAX_DMS_PER_HOUR) {
-            console.warn(`⚠️ Rate limit reached (${recentDMs.length}/${MAX_DMS_PER_HOUR} DMs in last hour). Skipping to protect page health.`);
-            continue;
+          const dmCountLastHour = recentDMs ? recentDMs.length : 0;
+          let humanDelay;
+          if (dmCountLastHour >= 50) {
+            // High volume — slow down significantly
+            humanDelay = 8000 + Math.floor(Math.random() * 7000); // 8-15s
+            console.log(`⏳ High volume (${dmCountLastHour} DMs/hr) — waiting ${humanDelay}ms (slower pacing)`);
+          } else {
+            // Normal volume
+            humanDelay = 2000 + Math.floor(Math.random() * 4000); // 2-6s
+            console.log(`⏳ Waiting ${humanDelay}ms before sending DM (natural pacing)`);
           }
-
-          // --- Page Health: Random Human-Like Delay (2-6 seconds) ---
-          // Makes automation look natural, reduces spam detection risk
-          const humanDelay = 2000 + Math.floor(Math.random() * 4000);
-          console.log(`⏳ Waiting ${humanDelay}ms before sending DM (natural pacing)...`);
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
           // ═══ DISPATCH: Flow Builder or Standard DM ═══
