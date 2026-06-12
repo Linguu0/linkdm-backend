@@ -98,11 +98,37 @@ router.post('/instagram', async (req, res) => {
             const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
 
             if (isMatch) {
-              console.log(`✅ Condition match for campaign "${campaign.name}"! Advancing...`);
+              console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
+              
+              // --- Followers Only Check (RELIABLE here — user has messaged us, consent exists) ---
+              const campaignToken = campaign.access_token || process.env.ACCESS_TOKEN;
+              const followerResult = await isFollower(campaignToken, senderId);
+              
+              if (followerResult.status === 'no') {
+                // Confirmed non-follower → stop the flow, send follow prompt
+                console.log(`⏭️ User ${senderId} is NOT a follower — stopping flow, sending follow prompt`);
+                try {
+                  const { sendDirectMessage } = require('../services/instagram');
+                  await sendDirectMessage(
+                    campaignToken, senderId,
+                    '👋 Hey! To unlock the full content, please follow our account first. Once you follow, reply again and we\'ll send it! 📩',
+                    'text_message'
+                  );
+                } catch (e) {
+                  console.warn(`⚠️ Failed to send follow prompt:`, e.message);
+                }
+                // Clean up flow state — don't advance
+                await supabase.from('user_flow_states').delete()
+                  .eq('commenter_id', senderId)
+                  .eq('campaign_id', campaign.id);
+                break;
+              }
+              
+              console.log(`✅ User ${senderId} follower check passed (status: ${followerResult.status}) — advancing flow`);
               await advanceFlow({
                 commenterId: senderId,
                 campaignId: campaign.id,
-                accessToken: campaign.access_token || process.env.ACCESS_TOKEN,
+                accessToken: campaignToken,
                 stepIndex: currentIndex + 1,
                 isUserReply: true  // User replied → 24h window is open
               });
@@ -261,12 +287,9 @@ router.post('/instagram', async (req, res) => {
             }
           }
 
-          // NOTE: Followers-only check moved to AFTER initial DM/private reply
-          // (matching ManyChat's approach — check is done inside the flow after
-          // establishing messaging context, which is required for the API to work)
           const campaignToken = campaign.access_token || accessToken;
 
-          // --- Send Once Per User Check (BUG 1 FIX: exclude debug and follow_gate logs) ---
+          // --- Send Once Per User Check (prevents spamming same user) ---
           let shouldSkip = false;
           if (campaign.send_once_per_user !== false) {
             const { data: existingLogs, error: logError } = await supabase
@@ -275,7 +298,6 @@ router.post('/instagram', async (req, res) => {
               .eq('campaign_id', campaign.id)
               .eq('commenter_id', commenterId)
               .neq('status', 'debug')
-              .neq('status', 'follow_gate')
               .limit(1);
 
             if (logError) {
@@ -290,6 +312,27 @@ router.post('/instagram', async (req, res) => {
           }
 
           if (shouldSkip) continue;
+
+          // --- Page Health: Per-Hour Rate Limiter ---
+          // Prevent sending too many DMs in a short window (Instagram flags this as spam)
+          const MAX_DMS_PER_HOUR = 20;
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+          const { data: recentDMs } = await supabase
+            .from('dm_logs')
+            .select('id')
+            .eq('status', 'sent')
+            .gte('sent_at', oneHourAgo);
+
+          if (recentDMs && recentDMs.length >= MAX_DMS_PER_HOUR) {
+            console.warn(`⚠️ Rate limit reached (${recentDMs.length}/${MAX_DMS_PER_HOUR} DMs in last hour). Skipping to protect page health.`);
+            continue;
+          }
+
+          // --- Page Health: Random Human-Like Delay (2-6 seconds) ---
+          // Makes automation look natural, reduces spam detection risk
+          const humanDelay = 2000 + Math.floor(Math.random() * 4000);
+          console.log(`⏳ Waiting ${humanDelay}ms before sending DM (natural pacing)...`);
+          await new Promise(resolve => setTimeout(resolve, humanDelay));
 
           // ═══ DISPATCH: Flow Builder or Standard DM ═══
 
@@ -306,19 +349,6 @@ router.post('/instagram', async (req, res) => {
               }
             }
 
-            // --- Followers Only Check (after comment reply establishes context) ---
-            // Uses 3-attempt strategy: FB API → retry → IG fallback
-            const followerResult = await isFollower(campaignToken, commenterId);
-            
-            if (followerResult.status === 'no') {
-              // Confirmed non-follower → silently skip
-              console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is confirmed NOT a follower. No DM sent.`);
-              continue;
-            }
-            
-            // 'yes' = confirmed follower, 'unknown' = API couldn't determine after 3 tries (likely a follower)
-            console.log(`✅ User ${commenterId} passed follower check (status: ${followerResult.status}) — proceeding with flow`);
-
             await advanceFlow({
               commenterId,
               campaignId: campaign.id,
@@ -330,20 +360,6 @@ router.post('/instagram', async (req, res) => {
           }
 
           // Default single DM handling
-
-          // --- Followers Only Check (before sending standard DM) ---
-          // Uses 3-attempt strategy: FB API → retry → IG fallback
-          const followerResult = await isFollower(campaignToken, commenterId);
-          
-          if (followerResult.status === 'no') {
-            // Confirmed non-follower → silently skip
-            console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is confirmed NOT a follower. No DM sent.`);
-            continue;
-          }
-          
-          // 'yes' = confirmed follower, 'unknown' = API couldn't determine after 3 tries (likely a follower)
-          console.log(`✅ User ${commenterId} passed follower check (status: ${followerResult.status}) — sending standard DM`);
-
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
             commenterId,
