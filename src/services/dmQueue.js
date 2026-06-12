@@ -137,7 +137,7 @@ if (dmQueue) {
 // ---------------------------------------------------------------------------
 // Helper — add a DM job to the queue
 // ---------------------------------------------------------------------------
-async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, buttonTemplateData, quickRepliesData, delay = 0 }) {
+async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken, autoReply, commentId, buttonTemplateData, quickRepliesData, delay = 0, logStatus = 'sent' }) {
   // FORCE BYPASS: Bull queue might be stuck or out of Redis limits.
   // We send directly to ensure it processes and logs immediately.
   if (true || !dmQueue) {
@@ -164,7 +164,7 @@ async function enqueueDM({ commenterId, dmMessage, type, campaignId, accessToken
         commenter_id: commenterId,
         comment_id: commentId || null,
         dm_message: dmMessage,
-        status: 'sent',
+        status: logStatus,
         sent_at: new Date().toISOString(),
       });
     } catch (e) {

@@ -261,17 +261,12 @@ router.post('/instagram', async (req, res) => {
             }
           }
 
-          console.log(`✅ Keyword match! Campaign "${campaign.name}"`);
-
-          // --- Followers Only Filter (always active) ---
+          // NOTE: Followers-only check moved to AFTER initial DM/private reply
+          // (matching ManyChat's approach — check is done inside the flow after
+          // establishing messaging context, which is required for the API to work)
           const campaignToken = campaign.access_token || accessToken;
-          const follows = await isFollower(campaignToken, commenterId);
-          if (!follows) {
-            console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a follower`);
-            continue;
-          }
 
-          // --- Send Once Per User Check (BUG 1 FIX: exclude debug logs) ---
+          // --- Send Once Per User Check (BUG 1 FIX: exclude debug and follow_gate logs) ---
           let shouldSkip = false;
           if (campaign.send_once_per_user !== false) {
             const { data: existingLogs, error: logError } = await supabase
@@ -280,6 +275,7 @@ router.post('/instagram', async (req, res) => {
               .eq('campaign_id', campaign.id)
               .eq('commenter_id', commenterId)
               .neq('status', 'debug')
+              .neq('status', 'follow_gate')
               .limit(1);
 
             if (logError) {
@@ -300,8 +296,6 @@ router.post('/instagram', async (req, res) => {
           if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
             console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
 
-
-
             // BUG 3 FIX: Auto-reply to comment for flow_builder campaigns too
             if (campaign.auto_comment_reply !== false && commentId) {
               try {
@@ -310,6 +304,40 @@ router.post('/instagram', async (req, res) => {
               } catch (replyErr) {
                 console.warn(`⚠️ Failed to auto-reply to comment ${commentId}:`, replyErr.message);
               }
+            }
+
+            // --- Followers Only Check (after comment reply establishes context) ---
+            // Now that we've interacted via comment reply, check follower status
+            // The IGSID context should be available from the comment interaction
+            const followerResult = await isFollower(campaignToken, commenterId);
+            
+            if (followerResult.status === 'no') {
+              // Confirmed non-follower → send follow-gate DM instead of flow content
+              console.log(`⏭️ User ${commenterId} is NOT a follower — sending follow-gate DM`);
+              try {
+                await enqueueDM({
+                  commenterId,
+                  dmMessage: '👋 Hey! To receive the content, please follow our account first. Once you follow, comment again and we\'ll send it right away! 📩',
+                  type: 'text_message',
+                  campaignId: campaign.id,
+                  accessToken: campaignToken,
+                  commentId: commentId,
+                  autoReply: false,
+                  logStatus: 'follow_gate',
+                });
+              } catch (gateErr) {
+                console.warn(`⚠️ Failed to send follow-gate DM:`, gateErr.message);
+              }
+              continue;
+            }
+            
+            // status === 'yes' or 'unknown' → proceed with the flow
+            // For 'unknown': we allow the flow since the API couldn't determine status
+            // (this matches ManyChat's behavior — they send content when status is unclear)
+            if (followerResult.status === 'unknown') {
+              console.log(`⚠️ Follower status unknown for ${commenterId} — proceeding with flow (API limitation)`);
+            } else {
+              console.log(`✅ User ${commenterId} is a confirmed follower — proceeding with flow`);
             }
 
             await advanceFlow({
@@ -323,6 +351,31 @@ router.post('/instagram', async (req, res) => {
           }
 
           // Default single DM handling
+
+          // --- Followers Only Check (before sending standard DM) ---
+          const followerResult = await isFollower(campaignToken, commenterId);
+          
+          if (followerResult.status === 'no') {
+            // Confirmed non-follower → send follow-gate instead of actual content
+            console.log(`⏭️ User ${commenterId} is NOT a follower — sending follow-gate for standard DM`);
+            await enqueueDM({
+              commenterId,
+              dmMessage: '👋 Hey! To receive the content, please follow our account first. Once you follow, comment again and we\'ll send it right away! 📩',
+              type: 'text_message',
+              campaignId: campaign.id,
+              accessToken: campaignToken,
+              commentId,
+              autoReply: campaign.auto_comment_reply !== false,
+              logStatus: 'follow_gate',
+            });
+            continue;
+          }
+          
+          if (followerResult.status === 'unknown') {
+            console.log(`⚠️ Follower status unknown for ${commenterId} — proceeding with standard DM (API limitation)`);
+          } else {
+            console.log(`✅ User ${commenterId} is a confirmed follower — sending standard DM`);
+          }
 
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({

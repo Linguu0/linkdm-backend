@@ -172,21 +172,26 @@ async function replyToComment(accessToken, commentId, messageText) {
 /**
  * Check if a user follows the Instagram page.
  *
- * Uses GET /{commenter_id}?fields=is_user_follow_business
- * This field is available on the Instagram Graph API and tells us
- * directly if the user follows the business/creator account.
+ * Uses GET /{user_id}?fields=is_user_follow_business
+ * via the Facebook Graph API endpoint (required for IGSID lookups).
  *
- * - If is_user_follow_business === true → user follows → return true
- * - If is_user_follow_business === false → user doesn't follow → return false
- * - If API fails → fail-open (return true), log error for debugging
+ * Returns a three-state result:
+ *   { status: 'yes' }     — confirmed follower → allow DM
+ *   { status: 'no' }      — confirmed non-follower → block DM
+ *   { status: 'unknown' } — can't determine (consent not given, API error) → caller decides
+ *
+ * IMPORTANT: The is_user_follow_business field requires the user to have
+ * previously messaged the business. For new commenters who haven't DMed,
+ * Instagram returns a consent error → status will be 'unknown'.
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} userId – IGSID of the user to check
- * @returns {Promise<boolean>}
+ * @returns {Promise<{status: 'yes'|'no'|'unknown', reason?: string}>}
  */
 async function isFollower(accessToken, userId) {
   try {
-    const url = `${GRAPH_URL}/${userId}`;
+    // Use Facebook Graph API endpoint — required for IGSID user profile lookups
+    const url = `${FB_GRAPH_URL}/${userId}`;
     console.log(`👤 Checking follower status: GET ${url}?fields=is_user_follow_business`);
 
     const response = await axios.get(url, {
@@ -201,22 +206,29 @@ async function isFollower(accessToken, userId) {
 
     const followsYou = response.data?.is_user_follow_business;
     
-    if (typeof followsYou === 'boolean') {
-      console.log(`👤 Result for ${userId}: ${followsYou ? '✅ IS follower' : '❌ NOT a follower'}`);
-      return followsYou;
+    if (followsYou === true) {
+      console.log(`👤 Result for ${userId}: ✅ IS follower`);
+      return { status: 'yes' };
+    }
+    
+    if (followsYou === false) {
+      console.log(`👤 Result for ${userId}: ❌ NOT a follower`);
+      return { status: 'no' };
     }
 
-    // Field not returned — fail-open
-    console.warn(`⚠️ is_user_follow_business not in response, allowing DM:`, JSON.stringify(response.data));
-    return true;
+    // Field not returned — can't determine (user hasn't messaged us / no consent)
+    console.warn(`⚠️ is_user_follow_business not in response — status UNKNOWN:`, JSON.stringify(response.data));
+    return { status: 'unknown', reason: 'field_not_returned' };
   } catch (err) {
     const errMsg = err.response?.data?.error?.message || err.message;
     const errCode = err.response?.data?.error?.code;
+    const errSubcode = err.response?.data?.error?.error_subcode;
     const httpStatus = err.response?.status;
-    console.error(`❌ Follower check FAILED for ${userId}: HTTP ${httpStatus} [code=${errCode}] ${errMsg}`);
+    console.error(`❌ Follower check FAILED for ${userId}: HTTP ${httpStatus} [code=${errCode}, subcode=${errSubcode}] ${errMsg}`);
     console.error(`❌ Full error:`, JSON.stringify(err.response?.data || {}));
-    // Fail-open: API error → still send DM (we can't confirm they're NOT a follower)
-    return true;
+    // Can't determine follower status — return unknown
+    console.warn(`⚠️ Follower status UNKNOWN for ${userId} due to API error`);
+    return { status: 'unknown', reason: errMsg };
   }
 }
 
