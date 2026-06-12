@@ -307,38 +307,15 @@ router.post('/instagram', async (req, res) => {
             }
 
             // --- Followers Only Check (after comment reply establishes context) ---
-            // Now that we've interacted via comment reply, check follower status
-            // The IGSID context should be available from the comment interaction
             const followerResult = await isFollower(campaignToken, commenterId);
             
-            if (followerResult.status === 'no') {
-              // Confirmed non-follower → send follow-gate DM instead of flow content
-              console.log(`⏭️ User ${commenterId} is NOT a follower — sending follow-gate DM`);
-              try {
-                await enqueueDM({
-                  commenterId,
-                  dmMessage: '👋 Hey! To receive the content, please follow our account first. Once you follow, comment again and we\'ll send it right away! 📩',
-                  type: 'text_message',
-                  campaignId: campaign.id,
-                  accessToken: campaignToken,
-                  commentId: commentId,
-                  autoReply: false,
-                  logStatus: 'follow_gate',
-                });
-              } catch (gateErr) {
-                console.warn(`⚠️ Failed to send follow-gate DM:`, gateErr.message);
-              }
+            if (followerResult.status !== 'yes') {
+              // Not a confirmed follower → silently skip (no DM sent at all)
+              console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a confirmed follower (status: ${followerResult.status}). No DM sent.`);
               continue;
             }
             
-            // status === 'yes' or 'unknown' → proceed with the flow
-            // For 'unknown': we allow the flow since the API couldn't determine status
-            // (this matches ManyChat's behavior — they send content when status is unclear)
-            if (followerResult.status === 'unknown') {
-              console.log(`⚠️ Follower status unknown for ${commenterId} — proceeding with flow (API limitation)`);
-            } else {
-              console.log(`✅ User ${commenterId} is a confirmed follower — proceeding with flow`);
-            }
+            console.log(`✅ User ${commenterId} is a confirmed follower — proceeding with flow`);
 
             await advanceFlow({
               commenterId,
@@ -355,27 +332,13 @@ router.post('/instagram', async (req, res) => {
           // --- Followers Only Check (before sending standard DM) ---
           const followerResult = await isFollower(campaignToken, commenterId);
           
-          if (followerResult.status === 'no') {
-            // Confirmed non-follower → send follow-gate instead of actual content
-            console.log(`⏭️ User ${commenterId} is NOT a follower — sending follow-gate for standard DM`);
-            await enqueueDM({
-              commenterId,
-              dmMessage: '👋 Hey! To receive the content, please follow our account first. Once you follow, comment again and we\'ll send it right away! 📩',
-              type: 'text_message',
-              campaignId: campaign.id,
-              accessToken: campaignToken,
-              commentId,
-              autoReply: campaign.auto_comment_reply !== false,
-              logStatus: 'follow_gate',
-            });
+          if (followerResult.status !== 'yes') {
+            // Not a confirmed follower → silently skip (no DM sent at all)
+            console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a confirmed follower (status: ${followerResult.status}). No DM sent.`);
             continue;
           }
           
-          if (followerResult.status === 'unknown') {
-            console.log(`⚠️ Follower status unknown for ${commenterId} — proceeding with standard DM (API limitation)`);
-          } else {
-            console.log(`✅ User ${commenterId} is a confirmed follower — sending standard DM`);
-          }
+          console.log(`✅ User ${commenterId} is a confirmed follower — sending standard DM`);
 
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
