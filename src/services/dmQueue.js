@@ -23,31 +23,9 @@ function createRedisClient() {
 
 let dmQueue = null;
 
-if (!redisUrl) {
-  console.warn('⚠️ REDIS_URL not set — Bull queue disabled, DMs will be sent directly');
-} else {
-  try {
-    dmQueue = new Queue('dm-queue', {
-      createClient: (type) => createRedisClient(),
-      limiter: {
-        max: 10,
-        duration: 60000,
-      },
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 5000,
-        },
-        removeOnComplete: true,
-        removeOnFail: false,
-      },
-    });
-    console.log('✅ Bull DM queue initialized');
-  } catch (err) {
-    console.error('❌ Failed to initialize Bull queue:', err.message);
-  }
-}
+// Bull queue is fully disabled because we hit the Upstash Redis limit
+// AND we are now using the Postgres-based pending_delays system in flowRunner.js.
+console.warn('⚠️ Bull queue disabled to prevent Redis limit crash. Using direct send + DB delays.');
 
 if (dmQueue) {
   // Health check events
