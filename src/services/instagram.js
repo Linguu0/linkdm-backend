@@ -172,27 +172,46 @@ async function replyToComment(accessToken, commentId, messageText) {
 /**
  * Check if a user follows the Instagram page.
  *
- * Uses GET /{user_id}?fields=is_user_follow_business
- * via the Facebook Graph API endpoint (required for IGSID lookups).
+ * Uses a multi-attempt strategy to maximize accuracy:
+ *   1. Try graph.facebook.com (primary, correct endpoint for IGSID lookups)
+ *   2. If unknown → retry after a short delay (API may need time after comment interaction)
+ *   3. If still unknown → try graph.instagram.com as fallback
  *
- * Returns a three-state result:
+ * Returns:
  *   { status: 'yes' }     — confirmed follower → allow DM
  *   { status: 'no' }      — confirmed non-follower → block DM
- *   { status: 'unknown' } — can't determine (consent not given, API error) → caller decides
- *
- * IMPORTANT: The is_user_follow_business field requires the user to have
- * previously messaged the business. For new commenters who haven't DMed,
- * Instagram returns a consent error → status will be 'unknown'.
+ *   { status: 'unknown' } — all attempts failed → caller decides (rare after 3 tries)
  *
  * @param {string} accessToken – Page/user access token
  * @param {string} userId – IGSID of the user to check
  * @returns {Promise<{status: 'yes'|'no'|'unknown', reason?: string}>}
  */
 async function isFollower(accessToken, userId) {
+  // --- Attempt 1: Instagram Graph API (primary) ---
+  const result1 = await _checkFollowerViaAPI(GRAPH_URL, accessToken, userId, 'IG-attempt-1');
+  if (result1.status === 'yes' || result1.status === 'no') return result1;
+
+  // --- Attempt 2: Retry IG after a short delay (gives API time to register context) ---
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  const result2 = await _checkFollowerViaAPI(GRAPH_URL, accessToken, userId, 'IG-attempt-2');
+  if (result2.status === 'yes' || result2.status === 'no') return result2;
+
+  // --- Attempt 3: Fallback to Facebook Graph API ---
+  const result3 = await _checkFollowerViaAPI(FB_GRAPH_URL, accessToken, userId, 'FB-fallback');
+  if (result3.status === 'yes' || result3.status === 'no') return result3;
+
+  // All 3 attempts returned unknown
+  console.warn(`⚠️ All 3 follower check attempts returned unknown for ${userId}`);
+  return { status: 'unknown', reason: 'all_attempts_failed' };
+}
+
+/**
+ * Internal helper — single API call to check follower status.
+ */
+async function _checkFollowerViaAPI(baseUrl, accessToken, userId, label) {
   try {
-    // Use Facebook Graph API endpoint — required for IGSID user profile lookups
-    const url = `${FB_GRAPH_URL}/${userId}`;
-    console.log(`👤 Checking follower status: GET ${url}?fields=is_user_follow_business`);
+    const url = `${baseUrl}/${userId}`;
+    console.log(`👤 [${label}] Checking: GET ${url}?fields=is_user_follow_business`);
 
     const response = await axios.get(url, {
       params: {
@@ -202,32 +221,23 @@ async function isFollower(accessToken, userId) {
       timeout: 10000,
     });
 
-    console.log(`👤 Follower API response:`, JSON.stringify(response.data));
-
     const followsYou = response.data?.is_user_follow_business;
     
     if (followsYou === true) {
-      console.log(`👤 Result for ${userId}: ✅ IS follower`);
+      console.log(`👤 [${label}] ${userId}: ✅ IS follower`);
       return { status: 'yes' };
     }
-    
     if (followsYou === false) {
-      console.log(`👤 Result for ${userId}: ❌ NOT a follower`);
+      console.log(`👤 [${label}] ${userId}: ❌ NOT a follower`);
       return { status: 'no' };
     }
 
-    // Field not returned — can't determine (user hasn't messaged us / no consent)
-    console.warn(`⚠️ is_user_follow_business not in response — status UNKNOWN:`, JSON.stringify(response.data));
+    console.warn(`👤 [${label}] ${userId}: field not returned — unknown`);
     return { status: 'unknown', reason: 'field_not_returned' };
   } catch (err) {
     const errMsg = err.response?.data?.error?.message || err.message;
     const errCode = err.response?.data?.error?.code;
-    const errSubcode = err.response?.data?.error?.error_subcode;
-    const httpStatus = err.response?.status;
-    console.error(`❌ Follower check FAILED for ${userId}: HTTP ${httpStatus} [code=${errCode}, subcode=${errSubcode}] ${errMsg}`);
-    console.error(`❌ Full error:`, JSON.stringify(err.response?.data || {}));
-    // Can't determine follower status — return unknown
-    console.warn(`⚠️ Follower status UNKNOWN for ${userId} due to API error`);
+    console.error(`❌ [${label}] Failed for ${userId}: [code=${errCode}] ${errMsg}`);
     return { status: 'unknown', reason: errMsg };
   }
 }

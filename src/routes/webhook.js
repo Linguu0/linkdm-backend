@@ -307,15 +307,17 @@ router.post('/instagram', async (req, res) => {
             }
 
             // --- Followers Only Check (after comment reply establishes context) ---
+            // Uses 3-attempt strategy: FB API → retry → IG fallback
             const followerResult = await isFollower(campaignToken, commenterId);
             
-            if (followerResult.status !== 'yes') {
-              // Not a confirmed follower → silently skip (no DM sent at all)
-              console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a confirmed follower (status: ${followerResult.status}). No DM sent.`);
+            if (followerResult.status === 'no') {
+              // Confirmed non-follower → silently skip
+              console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is confirmed NOT a follower. No DM sent.`);
               continue;
             }
             
-            console.log(`✅ User ${commenterId} is a confirmed follower — proceeding with flow`);
+            // 'yes' = confirmed follower, 'unknown' = API couldn't determine after 3 tries (likely a follower)
+            console.log(`✅ User ${commenterId} passed follower check (status: ${followerResult.status}) — proceeding with flow`);
 
             await advanceFlow({
               commenterId,
@@ -330,15 +332,17 @@ router.post('/instagram', async (req, res) => {
           // Default single DM handling
 
           // --- Followers Only Check (before sending standard DM) ---
+          // Uses 3-attempt strategy: FB API → retry → IG fallback
           const followerResult = await isFollower(campaignToken, commenterId);
           
-          if (followerResult.status !== 'yes') {
-            // Not a confirmed follower → silently skip (no DM sent at all)
-            console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is not a confirmed follower (status: ${followerResult.status}). No DM sent.`);
+          if (followerResult.status === 'no') {
+            // Confirmed non-follower → silently skip
+            console.log(`⏭️ Skipping "${campaign.name}" — user ${commenterId} is confirmed NOT a follower. No DM sent.`);
             continue;
           }
           
-          console.log(`✅ User ${commenterId} is a confirmed follower — sending standard DM`);
+          // 'yes' = confirmed follower, 'unknown' = API couldn't determine after 3 tries (likely a follower)
+          console.log(`✅ User ${commenterId} passed follower check (status: ${followerResult.status}) — sending standard DM`);
 
           console.log(`🚀 Triggering standard DM for "${campaign.name}" to commenter ${commenterId}`);
           await enqueueDM({
