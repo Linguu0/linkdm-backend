@@ -109,19 +109,25 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
 
   // ═══════════════════════════════════════════════════════════════════════
   // CASE 1: First trigger from comment (no user reply yet)
-  //         Must send ALL messages before first condition as ONE DM
+  //         Only send the FIRST message. Remaining steps require user reply
+  //         so the follower check in Section A can gate the content.
   // ═══════════════════════════════════════════════════════════════════════
   if (currentIndex === 0 && !isUserReply) {
-    const { messages, nextActionIndex } = collectMessagesUntilCondition(flow.steps, 0);
-
-    if (messages.length === 0) {
-      console.warn(`[FlowRunner] No messages found in flow for campaign ${campaignId}`);
+    // Only collect the first message (not all messages before condition)
+    const firstMessage = flow.steps[0];
+    
+    if (!firstMessage || firstMessage.type !== 'message') {
+      console.warn(`[FlowRunner] First step is not a message for campaign ${campaignId}`);
       return;
     }
 
-    // Combine all messages into one DM (separated by newlines)
-    const combinedMessage = messages.join('\n\n');
-    console.log(`[FlowRunner] 📦 Combining ${messages.length} message(s) into one DM (steps 0 to ${nextActionIndex - 1})`);
+    // Find what comes after the first message (skip delays)
+    let nextActionIndex = 1;
+    while (nextActionIndex < flow.steps.length && flow.steps[nextActionIndex].type === 'delay') {
+      nextActionIndex++;
+    }
+
+    console.log(`[FlowRunner] 📦 Sending ONLY first message (step 0). Remaining ${flow.steps.length - 1} step(s) wait for reply.`);
 
     // Update flow state to the next action point
     await supabase.from('user_flow_states').upsert({
@@ -131,17 +137,17 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       last_updated_at: new Date().toISOString()
     }, { onConflict: 'commenter_id, campaign_id' });
 
-    // Send combined message as private reply
+    // Send ONLY the first message as private reply
     await enqueueDM({
       commenterId,
-      dmMessage: combinedMessage,
-      type: currentStep.messageType || 'text_message',
+      dmMessage: firstMessage.text,
+      type: firstMessage.messageType || 'text_message',
       campaignId: campaign.id,
       accessToken,
       commentId: commentId,  // Use comment_id for private reply
       autoReply: false,
-      buttonTemplateData: currentStep.buttonTemplateData || null,
-      quickRepliesData: currentStep.quickRepliesData || null
+      buttonTemplateData: firstMessage.buttonTemplateData || null,
+      quickRepliesData: firstMessage.quickRepliesData || null
     });
 
     // If next action is a condition, we stop and wait for user reply
@@ -150,10 +156,16 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       return;
     }
 
-    // If we've reached the end, clean up
+    // If there are MORE steps after the first message (no condition), 
+    // still wait for reply — the follower check in Section A will gate content
+    if (nextActionIndex < flow.steps.length) {
+      console.log(`[FlowRunner] ⏸️ Flow paused at step ${nextActionIndex} — waiting for user reply to check follower status`);
+      return;
+    }
+
+    // If we've reached the end (single-message flow), clean up
     if (nextActionIndex >= flow.steps.length) {
-      console.log(`[FlowRunner] ✅ Flow completed for ${commenterId} (all messages sent in one DM)`);
-      // State already points past the end, will be cleaned up on next check
+      console.log(`[FlowRunner] ✅ Flow completed for ${commenterId} (single message flow)`);
       return;
     }
 

@@ -121,8 +121,8 @@ router.post('/instagram', async (req, res) => {
               continue;
             }
 
-            // --- Follower Check (reliable here — user has DM'd us) ---
-            if (campaign.followers_only !== false) {
+            // --- Follower Check (ALWAYS runs to protect page health) ---
+            {
               const followerResult = await isFollower(campaignToken, senderId);
               
               if (followerResult.status === 'no') {
