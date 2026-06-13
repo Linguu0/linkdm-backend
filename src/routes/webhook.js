@@ -276,6 +276,15 @@ router.post('/instagram', async (req, res) => {
 
         console.log(`📋 Found ${campaigns.length} active campaign(s). Checking for matches...`);
 
+        // PRIORITY: Sort campaigns so specific_post campaigns are checked FIRST.
+        // This prevents generic 'all_posts' campaigns from stealing matches
+        // when a more targeted campaign exists for the specific reel.
+        campaigns.sort((a, b) => {
+          if (a.target_type === 'specific_post' && b.target_type !== 'specific_post') return -1;
+          if (a.target_type !== 'specific_post' && b.target_type === 'specific_post') return 1;
+          return 0;
+        });
+
         // 2. Resolve access token — prefer fresh DB token over ENV fallback
         let accessToken = null;
         if (campaigns.length > 0 && campaigns[0].access_token) {
@@ -403,7 +412,7 @@ router.post('/instagram', async (req, res) => {
               commentId,
               stepIndex: 0
             });
-            continue;
+            break; // CRITICAL: Only ONE campaign should fire per comment
           }
 
           // Default single DM handling
@@ -419,6 +428,7 @@ router.post('/instagram', async (req, res) => {
             buttonTemplateData: campaign.button_template_data,
             quickRepliesData: campaign.quick_replies_data
           });
+          break; // CRITICAL: Only ONE campaign should fire per comment
         }
       }
     }
