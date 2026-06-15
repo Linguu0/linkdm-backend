@@ -390,6 +390,30 @@ router.post('/instagram', async (req, res) => {
           }
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
+          // ═══ FOLLOWER GATE — Block confirmed non-followers ═══
+          // Try the follower check BEFORE sending any DM.
+          // If API confirms 'no' → silently skip (protects page health).
+          // If API returns 'unknown' → proceed (can't be sure, don't block legit users).
+          try {
+            const followerResult = await isFollower(campaignToken, commenterId);
+            if (followerResult.status === 'no') {
+              console.log(`🚫 BLOCKED: ${commenterId} is NOT a follower — skipping DM for "${campaign.name}" (page health protection)`);
+              // Log the block so we can track it
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: commenterId,
+                comment_id: commentId || null,
+                dm_message: 'BLOCKED: Non-follower, DM not sent',
+                status: 'blocked_non_follower',
+                sent_at: new Date().toISOString(),
+              });
+              continue; // Skip to next campaign (or exit loop)
+            }
+            console.log(`👤 Follower check for ${commenterId}: ${followerResult.status} — proceeding with DM`);
+          } catch (followerErr) {
+            console.warn(`⚠️ Follower check failed for ${commenterId}: ${followerErr.message} — proceeding with DM`);
+          }
+
           // ═══ DISPATCH: Flow Builder or Standard DM ═══
 
           if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
