@@ -67,20 +67,43 @@ router.post('/instagram', async (req, res) => {
           console.log(`💬 Received DM from ${senderId}: "${text}"`);
 
           // Find ALL active flow sessions for this user
+          // Order by most recently updated — the user is most likely replying
+          // to the campaign they interacted with last
           const { data: states, error: stateError } = await supabase
             .from('user_flow_states')
             .select('*, campaigns(*)')
-            .eq('commenter_id', senderId);
+            .eq('commenter_id', senderId)
+            .order('last_updated_at', { ascending: false });
 
           if (stateError || !states || states.length === 0) {
             console.log(`ℹ️ No active flow state for ${senderId}`);
             continue;
           }
 
-          console.log(`🔄 User ${senderId} has ${states.length} active flow(s)`);
+          console.log(`🔄 User ${senderId} has ${states.length} active flow(s):`);
+          
+          // Clean up stale flow states (older than 24h — IG DM window expires)
+          const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const freshStates = [];
+          for (const s of states) {
+            if (s.last_updated_at && s.last_updated_at < twentyFourHoursAgo) {
+              console.log(`🗑️ Cleaning up stale flow state for campaign ${s.campaign_id} (last updated: ${s.last_updated_at})`);
+              await supabase.from('user_flow_states').delete()
+                .eq('commenter_id', senderId)
+                .eq('campaign_id', s.campaign_id);
+            } else {
+              console.log(`  → Campaign "${s.campaigns?.name}" (step: ${s.current_step_index}, updated: ${s.last_updated_at})`);
+              freshStates.push(s);
+            }
+          }
 
-          // Try to advance each flow if it matches the input
-          for (const state of states) {
+          if (freshStates.length === 0) {
+            console.log(`ℹ️ All flow states were stale for ${senderId}`);
+            continue;
+          }
+
+          // Process the MOST RECENT flow state first (already sorted by last_updated_at DESC)
+          for (const state of freshStates) {
             const campaign = state.campaigns;
             if (!campaign) continue;
 
