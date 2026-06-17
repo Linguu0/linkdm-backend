@@ -199,9 +199,27 @@ router.post('/instagram', async (req, res) => {
               const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
               const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
 
-              if (!isMatch) continue;
+              if (!isMatch) {
+                // Keywords didn't match — BUT if user was previously follow-gated,
+                // they might be replying "Done", "kar diya", "Following" etc.
+                // In that case, accept ANY reply and just re-check follower status.
+                const { data: gateLog } = await supabase
+                  .from('dm_logs')
+                  .select('id')
+                  .eq('commenter_id', senderId)
+                  .eq('campaign_id', campaign.id)
+                  .eq('status', 'follow_gate')
+                  .limit(1);
 
-              console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
+                if (gateLog && gateLog.length > 0) {
+                  console.log(`🔓 User ${senderId} was previously follow-gated — accepting ANY reply for "${campaign.name}"`);
+                  // Fall through to follower check below
+                } else {
+                  continue; // Genuine keyword mismatch, skip
+                }
+              } else {
+                console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
+              }
             }
             // --- NON-CONDITION STEP: any reply should try to advance ---
             // This handles the case where user was gated (follow prompt sent),
