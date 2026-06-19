@@ -117,11 +117,13 @@ router.post('/instagram', async (req, res) => {
             if (currentIndex === -1) {
               console.log(`📨 Standard DM reply received from ${senderId} for "${campaign.name}" — checking follower status`);
 
-              // Check follower status (works now because messaging consent exists)
+              // Check follower status (STRICT — only confirmed 'yes' passes)
+              console.log(`🔍 [StdDM] Checking follower for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
               const followerResult = await isFollower(campaignToken, senderId);
+              console.log(`🔍 [StdDM] Result: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
-              if (followerResult.status === 'no') {
-                console.log(`🚫 User ${senderId} is NOT a follower — blocking content for "${campaign.name}"`);
+              if (followerResult.status !== 'yes') {
+                console.log(`🚫 User ${senderId} NOT confirmed follower (status: ${followerResult.status}) — blocking content for "${campaign.name}"`);
                 // Send follow prompt with cooldown
                 const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
                 const { data: recentPrompts } = await supabase
@@ -156,8 +158,8 @@ router.post('/instagram', async (req, res) => {
                 break;
               }
 
-              // Follower confirmed (yes or unknown with consent) → send actual content
-              console.log(`✅ Follower confirmed (${followerResult.status}) — sending actual content for "${campaign.name}"`);
+              // ONLY confirmed followers reach here
+              console.log(`✅ CONFIRMED follower — sending actual content for "${campaign.name}"`);
               await enqueueDM({
                 commenterId: senderId,
                 dmMessage: campaign.dm_message,
@@ -231,11 +233,14 @@ router.post('/instagram', async (req, res) => {
               continue;
             }
 
-            // --- Follower Check (ALWAYS runs to protect page health) ---
+            // --- Follower Check (STRICT — only confirmed followers get content) ---
             {
+              console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
               const followerResult = await isFollower(campaignToken, senderId);
+              console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
               
-              if (followerResult.status === 'no') {
+              if (followerResult.status !== 'yes') {
+                // STRICT: Both 'no' and 'unknown' are blocked
                 // Non-follower → send follow prompt BUT keep flow state alive!
                 // Check cooldown: don't spam follow prompt if sent recently
                 const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -249,7 +254,7 @@ router.post('/instagram', async (req, res) => {
                   .limit(1);
 
                 if (!recentPrompts || recentPrompts.length === 0) {
-                  console.log(`⏭️ User ${senderId} is NOT a follower — sending follow prompt (keeping flow state)`);
+                  console.log(`🚫 User ${senderId} is NOT a confirmed follower (status: ${followerResult.status}) — sending follow prompt`);
                   try {
                     const { sendDirectMessage } = require('../services/instagram');
                     await sendDirectMessage(
@@ -261,7 +266,7 @@ router.post('/instagram', async (req, res) => {
                     await supabase.from('dm_logs').insert({
                       campaign_id: campaign.id,
                       commenter_id: senderId,
-                      dm_message: 'Follow gate prompt sent',
+                      dm_message: `Follow gate: status=${followerResult.status}, reason=${followerResult.reason || 'none'}`,
                       status: 'follow_gate',
                       sent_at: new Date().toISOString(),
                     });
@@ -269,13 +274,13 @@ router.post('/instagram', async (req, res) => {
                     console.warn(`⚠️ Failed to send follow prompt:`, e.message);
                   }
                 } else {
-                  console.log(`⏭️ User ${senderId} is NOT a follower — follow prompt already sent recently, skipping`);
+                  console.log(`🚫 User ${senderId} NOT confirmed follower — follow prompt already sent recently, skipping`);
                 }
                 // DO NOT delete flow state — user can retry after following
                 break;
               }
               
-              console.log(`✅ User ${senderId} follower check passed (status: ${followerResult.status}) — advancing flow`);
+              console.log(`✅ User ${senderId} is CONFIRMED follower — advancing flow`);
             }
 
             // --- Advance the flow ---
