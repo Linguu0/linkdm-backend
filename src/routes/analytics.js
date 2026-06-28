@@ -76,4 +76,5 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/debug-logs', async (req, res) => { const { data } = await supabase.from('dm_logs').select('*').order('created_at', { ascending: false }).limit(10); res.json(data); });
 module.exports = router;
