@@ -50,7 +50,11 @@ async function sendDirectMessage(accessToken, recipientId, messageContent, type 
             };
             if (slide.destination === 'url') {
               btn.type = "web_url";
-              btn.url = slide.url;
+              let formattedUrl = slide.url || '';
+              if (formattedUrl && !formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+                formattedUrl = 'https://' + formattedUrl;
+              }
+              btn.url = formattedUrl;
             } else if (slide.destination === 'phone') {
               btn.type = "phone_number";
               btn.payload = slide.url;
