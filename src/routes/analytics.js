@@ -7,17 +7,22 @@ const supabase = require('../db/supabase');
 // ---------------------------------------------------------------------------
 router.get('/', async (req, res) => {
   try {
-    const igUserId = req.query.ig_user_id || process.env.IG_USER_ID;
+    const igUserId = req.query.ig_user_id;
+    const defaultIgUserId = process.env.IG_USER_ID;
 
-    if (!igUserId) {
-      return res.status(400).json({ error: 'Missing ig_user_id query param' });
+    let targetIds = [];
+    if (igUserId) targetIds.push(igUserId);
+    if (defaultIgUserId && defaultIgUserId !== igUserId) targetIds.push(defaultIgUserId);
+
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'Missing ig_user_id query param and no default available' });
     }
 
     // 1. Get all campaigns for the user
     const { data: campaigns, error: campError } = await supabase
       .from('campaigns')
       .select('id, name, keyword, is_active')
-      .eq('ig_user_id', igUserId);
+      .in('ig_user_id', targetIds);
 
     if (campError) {
       console.error('❌ Error fetching campaigns for analytics:', campError.message);
