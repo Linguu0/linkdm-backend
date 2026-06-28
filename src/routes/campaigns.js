@@ -164,7 +164,9 @@ router.post('/', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body; // { is_active, name, keyword, dm_message }
+    const updates = { ...req.body };
+    delete updates.trigger_keyword;
+    delete updates.ig_user_id;
 
     if (!id) {
       return res.status(400).json({ error: 'Missing campaign id' });
