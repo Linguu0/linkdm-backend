@@ -123,38 +123,8 @@ router.post('/instagram', async (req, res) => {
               console.log(`🔍 [StdDM] Result: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
               if (followerResult.status !== 'yes') {
-                console.log(`🚫 User ${senderId} NOT confirmed follower (status: ${followerResult.status}) — blocking content for "${campaign.name}"`);
-                // Send follow prompt with cooldown
-                const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-                const { data: recentPrompts } = await supabase
-                  .from('dm_logs')
-                  .select('id')
-                  .eq('commenter_id', senderId)
-                  .eq('campaign_id', campaign.id)
-                  .eq('status', 'follow_gate')
-                  .gte('sent_at', fiveMinAgo)
-                  .limit(1);
-
-                if (!recentPrompts || recentPrompts.length === 0) {
-                  try {
-                    const { sendDirectMessage } = require('../services/instagram');
-                    await sendDirectMessage(
-                      campaignToken, senderId,
-                      '👋 Hey! To unlock the full content, please follow our account first. Once you follow, reply again and we\'ll send it! 📩',
-                      'text_message'
-                    );
-                    await supabase.from('dm_logs').insert({
-                      campaign_id: campaign.id,
-                      commenter_id: senderId,
-                      dm_message: 'Follow gate prompt sent',
-                      status: 'follow_gate',
-                      sent_at: new Date().toISOString(),
-                    });
-                  } catch (e) {
-                    console.warn(`⚠️ Failed to send follow prompt:`, e.message);
-                  }
-                }
-                // Keep flow state alive — user can retry after following
+                console.log(`🚫 User ${senderId} NOT confirmed follower (status: ${followerResult.status}) — SKIPPING DM (Follow gate prompt removed for page health)`);
+                // Keep flow state alive — user can retry after following, but we don't send the prompt
                 break;
               }
 
@@ -241,42 +211,9 @@ router.post('/instagram', async (req, res) => {
               
               if (followerResult.status !== 'yes') {
                 // STRICT: Both 'no' and 'unknown' are blocked
-                // Non-follower → send follow prompt BUT keep flow state alive!
-                // Check cooldown: don't spam follow prompt if sent recently
-                const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-                const { data: recentPrompts } = await supabase
-                  .from('dm_logs')
-                  .select('id')
-                  .eq('commenter_id', senderId)
-                  .eq('campaign_id', campaign.id)
-                  .eq('status', 'follow_gate')
-                  .gte('sent_at', fiveMinAgo)
-                  .limit(1);
-
-                if (!recentPrompts || recentPrompts.length === 0) {
-                  console.log(`🚫 User ${senderId} is NOT a confirmed follower (status: ${followerResult.status}) — sending follow prompt`);
-                  try {
-                    const { sendDirectMessage } = require('../services/instagram');
-                    await sendDirectMessage(
-                      campaignToken, senderId,
-                      '👋 Hey! To unlock the full content, please follow our account first. Once you follow, reply again and we\'ll send it! 📩',
-                      'text_message'
-                    );
-                    // Log the follow gate so we can track + cooldown
-                    await supabase.from('dm_logs').insert({
-                      campaign_id: campaign.id,
-                      commenter_id: senderId,
-                      dm_message: `Follow gate: status=${followerResult.status}, reason=${followerResult.reason || 'none'}`,
-                      status: 'follow_gate',
-                      sent_at: new Date().toISOString(),
-                    });
-                  } catch (e) {
-                    console.warn(`⚠️ Failed to send follow prompt:`, e.message);
-                  }
-                } else {
-                  console.log(`🚫 User ${senderId} NOT confirmed follower — follow prompt already sent recently, skipping`);
-                }
-                // DO NOT delete flow state — user can retry after following
+                // Non-follower → SKIPPING DM (Follow gate prompt removed for page health)
+                console.log(`🚫 User ${senderId} is NOT a confirmed follower (status: ${followerResult.status}) — SKIPPING DM`);
+                // Keep flow state alive so they can retry later, but we don't send the follow prompt
                 break;
               }
               
