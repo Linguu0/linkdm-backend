@@ -33,7 +33,7 @@ function collectMessagesUntilCondition(steps, startIndex) {
   while (i < steps.length) {
     const step = steps[i];
 
-    if (step.type === 'message') {
+    if (step.type === 'message' || step.type === 'button_message') {
       messages.push(step.text);
       i++;
     } else if (step.type === 'delay') {
@@ -116,7 +116,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     // Only collect the first message (not all messages before condition)
     const firstMessage = flow.steps[0];
     
-    if (!firstMessage || firstMessage.type !== 'message') {
+    if (!firstMessage || (firstMessage.type !== 'message' && firstMessage.type !== 'button_message')) {
       console.warn(`[FlowRunner] First step is not a message for campaign ${campaignId}`);
       return;
     }
@@ -141,12 +141,16 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     await enqueueDM({
       commenterId,
       dmMessage: firstMessage.text,
-      type: firstMessage.messageType || 'text_message',
+      type: firstMessage.type === 'button_message' ? 'button_template' : (firstMessage.messageType || 'text_message'),
       campaignId: campaign.id,
       accessToken,
       commentId: commentId,  // Use comment_id for private reply
       autoReply: false,
-      buttonTemplateData: firstMessage.buttonTemplateData || null,
+      buttonTemplateData: firstMessage.type === 'button_message' ? [{
+        title: firstMessage.btnLabel,
+        type: 'web_url',
+        url: firstMessage.btnUrl
+      }] : (firstMessage.buttonTemplateData || null),
       quickRepliesData: firstMessage.quickRepliesData || null
     });
 
@@ -176,7 +180,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
   // CASE 2: User replied (condition matched) — 24h window is now OPEN
   //         Can send individual messages with actual delays
   // ═══════════════════════════════════════════════════════════════════════
-  if (currentStep.type === 'message') {
+  if (currentStep.type === 'message' || currentStep.type === 'button_message') {
     const nextIndex = currentIndex + 1;
 
     // Update state
@@ -193,12 +197,16 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     await enqueueDM({
       commenterId,
       dmMessage: currentStep.text,
-      type: currentStep.messageType || 'text_message',
+      type: currentStep.type === 'button_message' ? 'button_template' : (currentStep.messageType || 'text_message'),
       campaignId: campaign.id,
       accessToken,
       commentId: null,  // Don't use comment_id — use recipient.id
       autoReply: false,
-      buttonTemplateData: currentStep.buttonTemplateData || null,
+      buttonTemplateData: currentStep.type === 'button_message' ? [{
+        title: currentStep.btnLabel,
+        type: 'web_url',
+        url: currentStep.btnUrl
+      }] : (currentStep.buttonTemplateData || null),
       quickRepliesData: currentStep.quickRepliesData || null
     });
 
