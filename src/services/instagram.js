@@ -38,6 +38,9 @@ async function sendDirectMessage(accessToken, recipientId, messageContent, type 
             const element = {
               title: slide.title || "Message",
             };
+            if (slide.subtitle) {
+              element.subtitle = slide.subtitle;
+            }
             if (slide.image) {
               element.image_url = slide.image;
             }
