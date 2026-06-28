@@ -339,7 +339,9 @@ router.post('/instagram', async (req, res) => {
 
         // 2. Resolve access token — prefer fresh DB token over ENV fallback
         let accessToken = null;
-        if (campaigns.length > 0 && campaigns[0].access_token) {
+        const { data: pageUser } = await supabase.from('users').select('access_token').eq('ig_user_id', webhookUserId).single();
+        accessToken = pageUser?.access_token;
+        if (!accessToken && campaigns.length > 0) {
           accessToken = campaigns[0].access_token;
         }
         if (!accessToken) {
