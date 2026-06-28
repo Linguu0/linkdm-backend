@@ -141,7 +141,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     await enqueueDM({
       commenterId,
       dmMessage: firstMessage.text || 'Template Message',
-      type: firstMessage.type === 'button_message' ? 'button_template' : (firstMessage.messageType || 'text_message'),
+      type: firstMessage.type === 'button_message' ? 'button_template' : (firstMessage.quickReplies && firstMessage.quickReplies.length > 0 ? 'quick_replies' : 'text_message'),
       campaignId: campaign.id,
       accessToken,
       commentId: commentId,  // Use comment_id for private reply
@@ -193,7 +193,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
     await enqueueDM({
       commenterId,
       dmMessage: currentStep.text || 'Template Message',
-      type: currentStep.type === 'button_message' ? 'button_template' : (currentStep.messageType || 'text_message'),
+      type: currentStep.type === 'button_message' ? 'button_template' : (currentStep.quickReplies && currentStep.quickReplies.length > 0 ? 'quick_replies' : 'text_message'),
       campaignId: campaign.id,
       accessToken,
       commentId: null,  // Don't use comment_id — use recipient.id
