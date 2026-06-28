@@ -442,43 +442,22 @@ router.post('/instagram', async (req, res) => {
           }
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
-          // ═══ FOLLOWER GATE — 2-Step Approach ═══
-          // Instagram's is_user_follow_business API does NOT work on comment triggers
-          // (no messaging consent yet → always returns 'unknown').
-          // SOLUTION: Never send the actual content on first trigger.
-          // Instead, send a teaser → wait for reply → check follower → send content.
-          // This is how ManyChat/LinkPlease work. The follower check is reliable
-          // AFTER the user replies (messaging consent established).
+          // ═══ FOLLOWER CHECK — Skip non-followers entirely ═══
+          // Simple and strict: check follower status FIRST.
+          // If not a confirmed follower → skip completely. No teaser, no DM, nothing.
+          // This protects page health by never sending DMs to non-followers.
+          console.log(`🔍 Checking follower status for ${commenterId} before sending anything...`);
+          const followerResult = await isFollower(campaignToken, commenterId);
+          console.log(`🔍 Follower result for ${commenterId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
-          // ═══ DISPATCH ═══
-
-          if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
-            console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
-
-            // Auto-reply to comment
-            if (campaign.auto_comment_reply !== false && commentId) {
-              try {
-                await replyToComment(campaignToken, commentId, 'Check your DMs! 📩');
-                console.log(`✅ Auto-replied to comment ${commentId} for flow campaign`);
-              } catch (replyErr) {
-                console.warn(`⚠️ Failed to auto-reply to comment ${commentId}:`, replyErr.message);
-              }
-            }
-
-            await advanceFlow({
-              commenterId,
-              campaignId: campaign.id,
-              accessToken: campaignToken,
-              commentId,
-              stepIndex: 0
-            });
-            break;
+          if (followerResult.status !== 'yes') {
+            console.log(`🚫 User ${commenterId} is NOT a confirmed follower (status: ${followerResult.status}) — SKIPPING entirely. No teaser, no DM.`);
+            continue;
           }
 
-          // ═══ Standard DM → Convert to 2-step flow for follower protection ═══
-          // Instead of sending the actual link/content immediately (which goes
-          // to non-followers too), send a teaser and wait for reply.
-          console.log(`🔒 Standard DM for "${campaign.name}" — using 2-step follower gate`);
+          console.log(`✅ User ${commenterId} is CONFIRMED follower — sending DM for "${campaign.name}"`);
+
+          // ═══ DISPATCH (only confirmed followers reach here) ═══
 
           // Auto-reply to comment
           if (campaign.auto_comment_reply !== false && commentId) {
@@ -490,28 +469,31 @@ router.post('/instagram', async (req, res) => {
             }
           }
 
-          // Send teaser message (private reply — not the actual content)
-          const teaserMessage = campaign.teaser_message || '👋 Hey! Reply "YES" to get the content! 📩';
+          if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
+            console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
+            await advanceFlow({
+              commenterId,
+              campaignId: campaign.id,
+              accessToken: campaignToken,
+              commentId,
+              stepIndex: 0
+            });
+            break;
+          }
+
+          // ═══ Standard DM — Send content directly to confirmed follower ═══
+          console.log(`📩 Sending standard DM content directly to confirmed follower ${commenterId}`);
           await enqueueDM({
             commenterId,
-            dmMessage: teaserMessage,
-            type: 'text_message',
+            dmMessage: campaign.dm_message,
+            type: campaign.dm_type || 'text_message',
             campaignId: campaign.id,
             accessToken: campaignToken,
-            commentId,  // Private reply to comment
+            commentId,
             autoReply: false,
+            buttonTemplateData: campaign.button_template_data,
+            quickRepliesData: campaign.quick_replies_data
           });
-
-          // Store flow state so Section A can handle the reply
-          // We create a virtual 2-step flow: teaser (done) → actual content (on reply)
-          await supabase.from('user_flow_states').upsert({
-            commenter_id: commenterId,
-            campaign_id: campaign.id,
-            current_step_index: -1,  // Special: -1 means "standard DM waiting for reply"
-            last_updated_at: new Date().toISOString()
-          }, { onConflict: 'commenter_id, campaign_id' });
-
-          console.log(`📨 Teaser sent to ${commenterId} — waiting for reply to check follower + send content`);
           break;
         }
       }
