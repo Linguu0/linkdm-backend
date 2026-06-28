@@ -81,7 +81,9 @@ router.post('/', async (req, res) => {
     }
 
     // Get access token — required by DB schema
-    let accessToken = process.env.ACCESS_TOKEN || '';
+    let accessToken = '';
+    const { data: userData } = await supabase.from('users').select('access_token').eq('ig_user_id', userId).single();
+    accessToken = userData?.access_token || process.env.ACCESS_TOKEN;
     if (!accessToken) {
       // Try to get from users table
       const { data: userData } = await supabase
