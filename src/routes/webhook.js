@@ -60,7 +60,7 @@ router.post('/instagram', async (req, res) => {
       if (entry.messaging) {
         for (const msg of entry.messaging) {
           const senderId = msg.sender?.id;
-          const text = msg.message?.quick_reply?.payload || msg.message?.text || msg.postback?.payload || msg.postback?.title;
+          const text = msg.message?.text || msg.postback?.title || msg.message?.quick_reply?.payload || msg.postback?.payload;
 
           if (!senderId || !text) continue;
 
