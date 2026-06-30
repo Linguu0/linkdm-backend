@@ -89,6 +89,10 @@ router.get('/fix-campaign-id', async (req, res) => {
     .update({ ig_user_id: '17841462923731141' })
     .eq('id', '8f75719e-c9c0-487d-b4de-cd26d1d4f2aa')
     .select();
+  if (error) return res.json({ error: error.message });
+  res.json({ fixed: true, data });
+});
+
 router.get('/debug-flow-states', async (req, res) => {
   const { data } = await supabase.from('user_flow_states').select('*').order('last_updated_at', { ascending: false }).limit(20);
   res.json(data);
