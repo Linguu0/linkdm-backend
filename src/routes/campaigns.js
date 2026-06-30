@@ -60,7 +60,10 @@ router.post('/', async (req, res) => {
       followers_only,
     } = req.body;
 
-    const userId = ig_user_id || process.env.IG_USER_ID || '17841462923731141';
+    // ALWAYS prefer ENV IG_USER_ID to prevent mismatches with webhook entry.id
+    // The frontend sometimes sends a different ig_user_id from the login response
+    // which doesn't match the webhook entry.id, causing campaigns to be invisible
+    const userId = process.env.IG_USER_ID || ig_user_id || '17841462923731141';
 
     // Accept keyword as array or string, also accept legacy trigger_keyword
     let keywordValue = keyword || trigger_keyword;
