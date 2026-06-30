@@ -82,4 +82,14 @@ router.get('/debug-campaigns', async (req, res) => {
   const { data } = await supabase.from('campaigns').select('id, name, keyword, is_active, ig_user_id, target_type, target_media_id, dm_type, send_once_per_user').eq('is_active', true);
   res.json(data);
 });
+
+router.get('/fix-campaign-id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ ig_user_id: '17841462923731141' })
+    .eq('id', '8f75719e-c9c0-487d-b4de-cd26d1d4f2aa')
+    .select();
+  if (error) return res.json({ error: error.message });
+  res.json({ fixed: true, data });
+});
 module.exports = router;
