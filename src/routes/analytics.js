@@ -77,4 +77,9 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/debug-logs', async (req, res) => { const { data } = await supabase.from('dm_logs').select('*').order('sent_at', { ascending: false }).limit(10); res.json(data); });
+
+router.get('/debug-campaigns', async (req, res) => {
+  const { data } = await supabase.from('campaigns').select('id, name, keyword, is_active, ig_user_id, target_type, target_media_id, dm_type, send_once_per_user').eq('is_active', true);
+  res.json(data);
+});
 module.exports = router;
