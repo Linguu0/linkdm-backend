@@ -147,7 +147,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       commentId: commentId,  // Use comment_id for private reply
       autoReply: false,
       buttonTemplateData: firstMessage.type === 'button_message' ? firstMessage.slides : (firstMessage.buttonTemplateData || null),
-      quickRepliesData: firstMessage.quickRepliesData || null
+      quickRepliesData: firstMessage.quickReplies || null
     });
 
     // If next action is a condition, we stop and wait for user reply
@@ -199,7 +199,7 @@ async function advanceFlow({ commenterId, campaignId, accessToken, stepIndex = n
       commentId: null,  // Don't use comment_id — use recipient.id
       autoReply: false,
       buttonTemplateData: currentStep.type === 'button_message' ? currentStep.slides : (currentStep.buttonTemplateData || null),
-      quickRepliesData: currentStep.quickRepliesData || null
+      quickRepliesData: currentStep.quickReplies || null
     });
 
     // Continue to next step
