@@ -9,6 +9,7 @@ const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
 const { processPendingDelays } = require('./services/flowRunner');
+const { ensureTable: ensureRetryTable, processPendingFollowerChecks } = require('./services/followerRetryWorker');
 const supabase = require('./db/supabase');
 
 // ---------------------------------------------------------------------------
@@ -169,6 +170,23 @@ if (require.main === module) {
     }
   }, POLL_INTERVAL);
   console.log(`⏱️  Delay poller started (every ${POLL_INTERVAL / 1000}s)`);
+
+  // -----------------------------------------------------------------------
+  // Follower Retry Poller — checks pending_follower_checks every 30 seconds
+  // Re-verifies follower status for users who were deferred due to API cache.
+  // -----------------------------------------------------------------------
+  const RETRY_POLL_INTERVAL = 30 * 1000; // 30 seconds
+  ensureRetryTable().catch(err => {
+    console.error('[FollowerRetry] ❌ Table setup error:', err.message);
+  });
+  setInterval(async () => {
+    try {
+      await processPendingFollowerChecks();
+    } catch (err) {
+      console.error('[FollowerRetry] ❌ Unhandled error:', err.message);
+    }
+  }, RETRY_POLL_INTERVAL);
+  console.log(`🔄 Follower retry poller started (every ${RETRY_POLL_INTERVAL / 1000}s)`);
 
   // Keep-alive self-ping — prevents Render free tier from spinning down
   const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;

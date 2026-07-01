@@ -5,6 +5,7 @@ const { matchesKeyword } = require('../services/matcher');
 const { enqueueDM } = require('../services/dmQueue');
 const { advanceFlow } = require('../services/flowRunner');
 const { replyToComment, isFollower } = require('../services/instagram');
+const { addToRetryQueue } = require('../services/followerRetryWorker');
 
 // ---------------------------------------------------------------------------
 // GET /webhook/instagram — Meta webhook verification (challenge handshake)
@@ -453,7 +454,14 @@ router.post('/instagram', async (req, res) => {
           console.log(`🔍 Follower result for ${commenterId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
           if (followerResult.status !== 'yes') {
-            console.log(`🚫 User ${commenterId} is NOT a confirmed follower (status: ${followerResult.status}) — SKIPPING entirely. No teaser, no DM.`);
+            console.log(`⏳ User ${commenterId} is NOT confirmed follower YET (status: ${followerResult.status}) — adding to retry queue`);
+            await addToRetryQueue({
+              commenterId,
+              campaignId: campaign.id,
+              commentId,
+              accessToken: campaignToken,
+              dmType: campaign.dm_type || 'text_message'
+            });
             continue;
           }
 
