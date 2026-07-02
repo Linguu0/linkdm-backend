@@ -102,9 +102,10 @@ async function processPendingFollowerChecks() {
   const now = new Date().toISOString();
 
   // Fetch all pending entries whose next_retry_at has passed
+  // NOTE: Do NOT use .select('*, campaigns(*)') — requires foreign key constraint
   const { data: pendingList, error } = await supabase
     .from('pending_follower_checks')
-    .select('*, campaigns(*)')
+    .select('*')
     .eq('status', 'pending')
     .lte('next_retry_at', now)
     .order('next_retry_at', { ascending: true })
@@ -121,9 +122,15 @@ async function processPendingFollowerChecks() {
 
   for (const entry of pendingList) {
     const { commenter_id, campaign_id, comment_id, access_token, retry_count, created_at } = entry;
-    const campaign = entry.campaigns;
 
-    if (!campaign) {
+    // Fetch campaign separately (no FK join needed)
+    const { data: campaign, error: campErr } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('id', campaign_id)
+      .single();
+
+    if (campErr || !campaign) {
       console.warn(`[FollowerRetry] ⚠️ Campaign ${campaign_id} not found, removing entry`);
       await supabase.from('pending_follower_checks').delete().eq('id', entry.id);
       continue;
