@@ -97,4 +97,9 @@ router.get('/debug-flow-states', async (req, res) => {
   const { data } = await supabase.from('user_flow_states').select('*').order('last_updated_at', { ascending: false }).limit(20);
   res.json(data);
 });
+router.get('/debug-pending-retries', async (req, res) => {
+  const { data, error } = await supabase.from('pending_follower_checks').select('*').order('created_at', { ascending: false }).limit(20);
+  if (error) return res.json({ error: error.message });
+  res.json(data);
+});
 module.exports = router;
