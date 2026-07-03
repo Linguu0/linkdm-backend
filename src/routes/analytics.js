@@ -103,11 +103,45 @@ router.get('/debug-pending-retries', async (req, res) => {
   res.json(data);
 });
 router.get('/test-follower/:userId', async (req, res) => {
-  const { isFollower } = require('../services/instagram');
+  const axios = require('axios');
   const token = process.env.ACCESS_TOKEN;
   const userId = req.params.userId;
-  console.log(`[TEST] Checking follower for ${userId} with token: ${token ? token.substring(0, 15) + '...' : 'MISSING'}`);
-  const result = await isFollower(token, userId);
-  res.json({ userId, result, tokenPresent: !!token });
+  const results = {};
+  
+  // Raw IG Graph API call
+  try {
+    const resp = await axios.get(`https://graph.instagram.com/v21.0/${userId}`, {
+      params: { fields: 'is_user_follow_business', access_token: token },
+      timeout: 10000,
+    });
+    results.ig_graph = { status: 'ok', data: resp.data };
+  } catch (err) {
+    results.ig_graph = { 
+      status: 'error', 
+      code: err.response?.data?.error?.code,
+      type: err.response?.data?.error?.type,
+      message: err.response?.data?.error?.message || err.message,
+      httpStatus: err.response?.status
+    };
+  }
+  
+  // Raw FB Graph API call
+  try {
+    const resp = await axios.get(`https://graph.facebook.com/v21.0/${userId}`, {
+      params: { fields: 'is_user_follow_business', access_token: token },
+      timeout: 10000,
+    });
+    results.fb_graph = { status: 'ok', data: resp.data };
+  } catch (err) {
+    results.fb_graph = { 
+      status: 'error', 
+      code: err.response?.data?.error?.code,
+      type: err.response?.data?.error?.type,
+      message: err.response?.data?.error?.message || err.message,
+      httpStatus: err.response?.status
+    };
+  }
+  
+  res.json({ userId, tokenPresent: !!token, tokenStart: token ? token.substring(0, 20) : null, results });
 });
 module.exports = router;
