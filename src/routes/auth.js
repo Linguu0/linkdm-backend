@@ -80,6 +80,20 @@ router.get('/callback', async (req, res) => {
 
     console.log(`✅ User ${igUserId} authenticated & saved`);
 
+    // 4. Update ALL existing campaigns with the fresh token
+    //    This ensures follower checks work on all campaigns
+    const { data: updatedCampaigns, error: campError } = await supabase
+      .from('campaigns')
+      .update({ access_token: longLivedToken })
+      .eq('ig_user_id', igUserId.toString())
+      .select('id, name');
+
+    if (campError) {
+      console.warn('⚠️ Failed to update campaign tokens:', campError.message);
+    } else {
+      console.log(`✅ Updated token for ${updatedCampaigns?.length || 0} campaigns`);
+    }
+
     // Redirect to frontend with success
     return res.redirect(
       `${process.env.FRONTEND_URL}?auth=success&ig_user_id=${igUserId}`
