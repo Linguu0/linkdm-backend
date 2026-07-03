@@ -200,37 +200,21 @@ async function processPendingFollowerChecks() {
 
     // Still not confirmed — check if we've exceeded max age
     if (ageMs >= MAX_AGE_MS) {
-      // ⏰ EXPIRED — Send soft follow gate message as last resort
-      console.log(`[FollowerRetry] ⏰ ${commenter_id} expired after ${Math.round(ageMs / 60000)}min. Sending soft follow gate...`);
+      // ⏰ EXPIRED — silently give up. STRICT RULE: never DM non-followers.
+      console.log(`[FollowerRetry] ⏰ ${commenter_id} expired after ${Math.round(ageMs / 60000)}min. NOT a follower — silently removing.`);
+      
+      // Log the skip
+      await supabase.from('dm_logs').insert({
+        campaign_id,
+        commenter_id,
+        comment_id,
+        dm_message: `[EXPIRED] User not confirmed as follower after ${Math.round(ageMs / 60000)}min of retries. No DM sent.`,
+        status: 'skipped_not_follower',
+        sent_at: new Date().toISOString()
+      });
 
-      try {
-        await enqueueDM({
-          commenterId: commenter_id,
-          dmMessage: `Hey! 👋 I noticed you commented on my post but Instagram's system says you're not following me yet. Please make sure you hit "Follow" and then reply "Done" to this message — I'll send you the link right away! 🔗`,
-          type: 'text_message',
-          campaignId: campaign_id,
-          accessToken: campaignToken,
-          commentId: comment_id,
-          autoReply: false,
-        });
-
-        // Log the soft gate
-        await supabase.from('dm_logs').insert({
-          campaign_id,
-          commenter_id,
-          comment_id,
-          dm_message: '[SOFT GATE] Sent follow gate after all retries exhausted',
-          status: 'follow_gate',
-          sent_at: new Date().toISOString()
-        });
-      } catch (gateErr) {
-        console.error(`[FollowerRetry] ❌ Failed to send soft gate to ${commenter_id}:`, gateErr.message);
-      }
-
-      // Mark as completed (soft_gate sent)
-      await supabase.from('pending_follower_checks')
-        .update({ status: 'soft_gate_sent' })
-        .eq('id', entry.id);
+      // Remove from retry queue
+      await supabase.from('pending_follower_checks').delete().eq('id', entry.id);
       continue;
     }
 
