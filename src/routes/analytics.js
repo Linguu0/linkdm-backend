@@ -102,4 +102,12 @@ router.get('/debug-pending-retries', async (req, res) => {
   if (error) return res.json({ error: error.message });
   res.json(data);
 });
+router.get('/test-follower/:userId', async (req, res) => {
+  const { isFollower } = require('../services/instagram');
+  const token = process.env.ACCESS_TOKEN;
+  const userId = req.params.userId;
+  console.log(`[TEST] Checking follower for ${userId} with token: ${token ? token.substring(0, 15) + '...' : 'MISSING'}`);
+  const result = await isFollower(token, userId);
+  res.json({ userId, result, tokenPresent: !!token });
+});
 module.exports = router;
