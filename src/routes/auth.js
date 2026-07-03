@@ -94,9 +94,23 @@ router.get('/callback', async (req, res) => {
       console.log(`✅ Updated token for ${updatedCampaigns?.length || 0} campaigns`);
     }
 
+    // 5. Fetch the real Instagram username
+    let igUsername = 'Creator';
+    try {
+      const axios = require('axios');
+      const profileRes = await axios.get(`https://graph.instagram.com/v21.0/me`, {
+        params: { fields: 'username', access_token: longLivedToken },
+        timeout: 10000,
+      });
+      igUsername = profileRes.data?.username || 'Creator';
+      console.log(`✅ Fetched Instagram username: @${igUsername}`);
+    } catch (profileErr) {
+      console.warn('⚠️ Failed to fetch username:', profileErr.message);
+    }
+
     // Redirect to frontend with success
     return res.redirect(
-      `${process.env.FRONTEND_URL}?auth=success&ig_user_id=${igUserId}`
+      `${process.env.FRONTEND_URL}?auth=success&ig_user_id=${igUserId}&username=${encodeURIComponent(igUsername)}`
     );
   } catch (err) {
     console.error('❌ Auth callback error:', err.message);
