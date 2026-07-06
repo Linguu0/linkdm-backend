@@ -445,27 +445,14 @@ router.post('/instagram', async (req, res) => {
           }
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
-          // ═══ FOLLOWER CHECK — Skip non-followers entirely ═══
-          // Simple and strict: check follower status FIRST.
-          // If not a confirmed follower → skip completely. No teaser, no DM, nothing.
-          // This protects page health by never sending DMs to non-followers.
-          console.log(`🔍 Checking follower status for ${commenterId} before sending anything...`);
-          const followerResult = await isFollower(campaignToken, commenterId);
-          console.log(`🔍 Follower result for ${commenterId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
-
-          if (followerResult.status !== 'yes') {
-            console.log(`⏳ User ${commenterId} is NOT confirmed follower YET (status: ${followerResult.status}) — adding to retry queue`);
-            await addToRetryQueue({
-              commenterId,
-              campaignId: campaign.id,
-              commentId,
-              accessToken: campaignToken,
-              dmType: campaign.dm_type || 'text_message'
-            });
-            continue;
-          }
-
-          console.log(`✅ User ${commenterId} is CONFIRMED follower — sending DM for "${campaign.name}"`);
+          // ═══ SEND DM DIRECTLY ═══
+          // Instagram's Private Reply API handles follower separation:
+          //   - Followers → DM goes to their Inbox (instant)
+          //   - Non-followers → DM goes to Message Requests (rarely seen)
+          // This is exactly how ManyChat and every major DM tool works.
+          // The is_user_follow_business API requires a messaging interaction first
+          // (Error 230 from comment context), so checking before DM is impossible.
+          console.log(`📩 Sending DM for "${campaign.name}" to ${commenterId} (via comment_id: ${commentId})`);
 
           // ═══ DISPATCH (only confirmed followers reach here) ═══
 
