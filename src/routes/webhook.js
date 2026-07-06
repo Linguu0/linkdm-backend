@@ -511,10 +511,12 @@ router.post('/instagram', async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
           // ═══ COMPETITOR-STYLE FOLLOW GATE ═══
-          // Step 1: Send "Follow to get the link" DM with buttons
-          // Step 2: User taps "I'm following ✅" → we re-check via API (works now because messaging channel is open)
-          // Step 3: If follower → send content. If not → resend gate.
-          console.log(`🔒 Sending follow gate for "${campaign.name}" to ${commenterId}`);
+          // Step 1: Check follower status FIRST (if they've messaged before, this works instantly).
+          // Step 2: If 'yes' → send link instantly.
+          // Step 3: If 'no' or 'unknown' (Error 230 because no prior DM) → send Follow Gate.
+          console.log(`🔍 Checking follower status for ${commenterId} before sending follow gate...`);
+          const followerResult = await isFollower(campaignToken, commenterId);
+          console.log(`🔍 Follower result for ${commenterId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
           // Auto-reply to comment
           if (campaign.auto_comment_reply !== false && commentId) {
@@ -526,35 +528,64 @@ router.post('/instagram', async (req, res) => {
             }
           }
 
-          // Get profile URL for "Visit Profile" button
-          const profileUsername = await getProfileUsername(campaignToken);
-          const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
+          if (followerResult.status === 'yes') {
+            // ✅ Already a confirmed follower (and API allowed the check)
+            console.log(`✅ User ${commenterId} is a CONFIRMED follower — sending actual content directly`);
+            
+            if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
+              console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
+              await advanceFlow({
+                commenterId,
+                campaignId: campaign.id,
+                accessToken: campaignToken,
+                commentId,
+                stepIndex: 0
+              });
+            } else {
+              await enqueueDM({
+                commenterId,
+                dmMessage: campaign.dm_message,
+                type: campaign.dm_type || 'text_message',
+                campaignId: campaign.id,
+                accessToken: campaignToken,
+                commentId,
+                autoReply: false,
+                buttonTemplateData: campaign.button_template_data,
+                quickRepliesData: campaign.quick_replies_data
+              });
+            }
+          } else {
+            // ❌ Not a follower OR Unknown (Error 230) — Send Follow Gate
+            console.log(`🔒 User ${commenterId} status is ${followerResult.status} — sending follow gate for "${campaign.name}"`);
+            const profileUsername = await getProfileUsername(campaignToken);
+            const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
 
-          try {
-            // Send follow gate message via private reply (comment_id)
-            await sendFollowGateMessage(campaignToken, commenterId, commentId, profileUrl);
+            try {
+              // Send follow gate message via private reply (comment_id)
+              await sendFollowGateMessage(campaignToken, commenterId, commentId, profileUrl);
 
-            // Save flow state with step -2 (follow gate pending)
-            await supabase.from('user_flow_states').upsert({
-              commenter_id: commenterId,
-              campaign_id: campaign.id,
-              current_step_index: -2,
-              last_updated_at: new Date().toISOString()
-            }, { onConflict: 'commenter_id,campaign_id' });
+              // Save flow state with step -2 (follow gate pending)
+              await supabase.from('user_flow_states').upsert({
+                commenter_id: commenterId,
+                campaign_id: campaign.id,
+                current_step_index: -2,
+                last_updated_at: new Date().toISOString()
+              }, { onConflict: 'commenter_id,campaign_id' });
 
-            // Log the follow gate
-            await supabase.from('dm_logs').insert({
-              campaign_id: campaign.id,
-              commenter_id: commenterId,
-              comment_id: commentId,
-              dm_message: `[FOLLOW GATE] Sent follow check for "${campaign.name}"`,
-              status: 'follow_gate',
-              sent_at: new Date().toISOString()
-            });
+              // Log the follow gate
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: commenterId,
+                comment_id: commentId,
+                dm_message: `[FOLLOW GATE] Sent follow check for "${campaign.name}"`,
+                status: 'follow_gate',
+                sent_at: new Date().toISOString()
+              });
 
-            console.log(`✅ Follow gate sent and flow state saved for ${commenterId}`);
-          } catch (gateErr) {
-            console.error(`❌ Failed to send follow gate to ${commenterId}:`, gateErr.message);
+              console.log(`✅ Follow gate sent and flow state saved for ${commenterId}`);
+            } catch (gateErr) {
+              console.error(`❌ Failed to send follow gate to ${commenterId}:`, gateErr.message);
+            }
           }
           break;
         }
