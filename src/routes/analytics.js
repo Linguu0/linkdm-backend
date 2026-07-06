@@ -82,7 +82,7 @@ router.get('/debug-campaigns', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('campaigns')
-      .select('id, name, keyword, is_active, ig_user_id, target_type, target_media_id, dm_type, send_once_per_user, dm_message, button_template_data')
+      .select('id, name, keyword, is_active, ig_user_id, target_type, target_media_id, dm_type, send_once_per_user, dm_message, button_template_data, flow_data')
       .order('created_at', { ascending: false });
     if (error) throw error;
     res.json(data);
