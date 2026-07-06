@@ -160,6 +160,9 @@ router.post('/instagram', async (req, res) => {
                 // ✅ CONFIRMED follower — send actual content
                 console.log(`✅ CONFIRMED follower — sending content for "${campaign.name}"`);
 
+                const btnData = typeof campaign.button_template_data === 'string' ? JSON.parse(campaign.button_template_data) : campaign.button_template_data;
+                const qrData = typeof campaign.quick_replies_data === 'string' ? JSON.parse(campaign.quick_replies_data) : campaign.quick_replies_data;
+
                 if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
                   await advanceFlow({
                     commenterId: senderId,
@@ -177,8 +180,8 @@ router.post('/instagram', async (req, res) => {
                     accessToken: campaignToken,
                     commentId: null,
                     autoReply: false,
-                    buttonTemplateData: campaign.button_template_data,
-                    quickRepliesData: campaign.quick_replies_data
+                    buttonTemplateData: btnData,
+                    quickRepliesData: qrData
                   });
                 }
 
@@ -542,6 +545,9 @@ router.post('/instagram', async (req, res) => {
                 stepIndex: 0
               });
             } else {
+              const btnData = typeof campaign.button_template_data === 'string' ? JSON.parse(campaign.button_template_data) : campaign.button_template_data;
+              const qrData = typeof campaign.quick_replies_data === 'string' ? JSON.parse(campaign.quick_replies_data) : campaign.quick_replies_data;
+
               await enqueueDM({
                 commenterId,
                 dmMessage: campaign.dm_message,
@@ -550,8 +556,8 @@ router.post('/instagram', async (req, res) => {
                 accessToken: campaignToken,
                 commentId,
                 autoReply: false,
-                buttonTemplateData: campaign.button_template_data,
-                quickRepliesData: campaign.quick_replies_data
+                buttonTemplateData: btnData,
+                quickRepliesData: qrData
               });
             }
           } else {
