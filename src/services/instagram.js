@@ -249,10 +249,81 @@ async function _checkFollowerViaAPI(baseUrl, accessToken, userId, label) {
   }
 }
 
+/**
+ * Fetch the Instagram username for the authenticated page.
+ * Used to build the "Visit Profile" button URL.
+ */
+async function getProfileUsername(accessToken) {
+  try {
+    const resp = await axios.get(`${GRAPH_URL}/me`, {
+      params: { fields: 'username', access_token: accessToken },
+      timeout: 10000,
+    });
+    return resp.data?.username || null;
+  } catch (err) {
+    console.error('⚠️ Failed to fetch profile username:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Send a "Follow to get the link" message with two buttons:
+ *   1. "Visit Profile" (web_url → opens the IG profile)
+ *   2. "I'm following ✅" (postback → triggers follower re-check)
+ *
+ * This is the competitor-style follow gate flow.
+ */
+async function sendFollowGateMessage(accessToken, recipientId, commentId, profileUrl) {
+  const url = `${GRAPH_URL}/me/messages`;
+
+  const recipientPayload = commentId ? { comment_id: commentId } : { id: recipientId };
+
+  const payload = {
+    recipient: recipientPayload,
+    message: {
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'generic',
+          elements: [{
+            title: 'Aapne Follow Nahi kia 🥺\nFollow To Get The link!\nPlease❤️',
+            buttons: [
+              {
+                type: 'web_url',
+                url: profileUrl || 'https://www.instagram.com/',
+                title: 'Visit Profile'
+              },
+              {
+                type: 'postback',
+                title: "I'm following ✅",
+                payload: 'FOLLOW_GATE_CHECK'
+              }
+            ]
+          }]
+        }
+      }
+    }
+  };
+
+  console.log(`🔒 Sending follow gate message to ${commentId ? 'comment ' + commentId : recipientId}...`);
+
+  const response = await axios.post(url, payload, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  console.log(`✅ Follow gate sent successfully`);
+  return response.data;
+}
+
 module.exports = {
   sendDirectMessage,
   exchangeCodeForToken,
   exchangeForLongLivedToken,
   replyToComment,
   isFollower,
+  getProfileUsername,
+  sendFollowGateMessage,
 };

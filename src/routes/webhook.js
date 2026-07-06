@@ -4,8 +4,7 @@ const supabase = require('../db/supabase');
 const { matchesKeyword } = require('../services/matcher');
 const { enqueueDM } = require('../services/dmQueue');
 const { advanceFlow } = require('../services/flowRunner');
-const { replyToComment, isFollower } = require('../services/instagram');
-const { addToRetryQueue } = require('../services/followerRetryWorker');
+const { replyToComment, isFollower, getProfileUsername, sendFollowGateMessage } = require('../services/instagram');
 
 // ---------------------------------------------------------------------------
 // GET /webhook/instagram — Meta webhook verification (challenge handshake)
@@ -147,6 +146,72 @@ router.post('/instagram', async (req, res) => {
               await supabase.from('user_flow_states').delete()
                 .eq('commenter_id', senderId)
                 .eq('campaign_id', campaign.id);
+              break;
+            }
+
+            // ═══ FOLLOW GATE: User tapped "I'm following ✅" (step -2) ═══
+            if (currentIndex === -2) {
+              console.log(`🔒 Follow gate response from ${senderId} for "${campaign.name}" — checking follower status...`);
+
+              const followerResult = await isFollower(campaignToken, senderId);
+              console.log(`🔍 Follow gate result for ${senderId}: status="${followerResult.status}"`);
+
+              if (followerResult.status === 'yes') {
+                // ✅ CONFIRMED follower — send actual content
+                console.log(`✅ CONFIRMED follower — sending content for "${campaign.name}"`);
+
+                if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
+                  await advanceFlow({
+                    commenterId: senderId,
+                    campaignId: campaign.id,
+                    accessToken: campaignToken,
+                    commentId: null,
+                    stepIndex: 0
+                  });
+                } else {
+                  await enqueueDM({
+                    commenterId: senderId,
+                    dmMessage: campaign.dm_message,
+                    type: campaign.dm_type || 'text_message',
+                    campaignId: campaign.id,
+                    accessToken: campaignToken,
+                    commentId: null,
+                    autoReply: false,
+                    buttonTemplateData: campaign.button_template_data,
+                    quickRepliesData: campaign.quick_replies_data
+                  });
+                }
+
+                // Clean up flow state
+                await supabase.from('user_flow_states').delete()
+                  .eq('commenter_id', senderId)
+                  .eq('campaign_id', campaign.id);
+
+                await supabase.from('dm_logs').insert({
+                  campaign_id: campaign.id,
+                  commenter_id: senderId,
+                  dm_message: `[FOLLOW GATE PASSED] Content sent for "${campaign.name}"`,
+                  status: 'sent',
+                  sent_at: new Date().toISOString()
+                });
+              } else {
+                // ❌ NOT a follower — resend follow gate
+                console.log(`❌ ${senderId} still NOT a follower — resending follow gate`);
+                const profileUsername = await getProfileUsername(campaignToken);
+                const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
+
+                try {
+                  await sendFollowGateMessage(campaignToken, senderId, null, profileUrl);
+                } catch (gateErr) {
+                  console.error(`❌ Failed to resend follow gate:`, gateErr.message);
+                }
+
+                // Update timestamp to keep state fresh
+                await supabase.from('user_flow_states')
+                  .update({ last_updated_at: new Date().toISOString() })
+                  .eq('commenter_id', senderId)
+                  .eq('campaign_id', campaign.id);
+              }
               break;
             }
 
@@ -445,16 +510,11 @@ router.post('/instagram', async (req, res) => {
           }
           await new Promise(resolve => setTimeout(resolve, humanDelay));
 
-          // ═══ SEND DM DIRECTLY ═══
-          // Instagram's Private Reply API handles follower separation:
-          //   - Followers → DM goes to their Inbox (instant)
-          //   - Non-followers → DM goes to Message Requests (rarely seen)
-          // This is exactly how ManyChat and every major DM tool works.
-          // The is_user_follow_business API requires a messaging interaction first
-          // (Error 230 from comment context), so checking before DM is impossible.
-          console.log(`📩 Sending DM for "${campaign.name}" to ${commenterId} (via comment_id: ${commentId})`);
-
-          // ═══ DISPATCH (only confirmed followers reach here) ═══
+          // ═══ COMPETITOR-STYLE FOLLOW GATE ═══
+          // Step 1: Send "Follow to get the link" DM with buttons
+          // Step 2: User taps "I'm following ✅" → we re-check via API (works now because messaging channel is open)
+          // Step 3: If follower → send content. If not → resend gate.
+          console.log(`🔒 Sending follow gate for "${campaign.name}" to ${commenterId}`);
 
           // Auto-reply to comment
           if (campaign.auto_comment_reply !== false && commentId) {
@@ -466,31 +526,36 @@ router.post('/instagram', async (req, res) => {
             }
           }
 
-          if (campaign.dm_type === 'flow_builder' && campaign.flow_data) {
-            console.log(`📥 Starting flow-builder for ${commenterId} on campaign ${campaign.id}`);
-            await advanceFlow({
-              commenterId,
-              campaignId: campaign.id,
-              accessToken: campaignToken,
-              commentId,
-              stepIndex: 0
-            });
-            break;
-          }
+          // Get profile URL for "Visit Profile" button
+          const profileUsername = await getProfileUsername(campaignToken);
+          const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
 
-          // ═══ Standard DM — Send content directly to confirmed follower ═══
-          console.log(`📩 Sending standard DM content directly to confirmed follower ${commenterId}`);
-          await enqueueDM({
-            commenterId,
-            dmMessage: campaign.dm_message,
-            type: campaign.dm_type || 'text_message',
-            campaignId: campaign.id,
-            accessToken: campaignToken,
-            commentId,
-            autoReply: false,
-            buttonTemplateData: campaign.button_template_data,
-            quickRepliesData: campaign.quick_replies_data
-          });
+          try {
+            // Send follow gate message via private reply (comment_id)
+            await sendFollowGateMessage(campaignToken, commenterId, commentId, profileUrl);
+
+            // Save flow state with step -2 (follow gate pending)
+            await supabase.from('user_flow_states').upsert({
+              commenter_id: commenterId,
+              campaign_id: campaign.id,
+              current_step_index: -2,
+              last_updated_at: new Date().toISOString()
+            }, { onConflict: 'commenter_id,campaign_id' });
+
+            // Log the follow gate
+            await supabase.from('dm_logs').insert({
+              campaign_id: campaign.id,
+              commenter_id: commenterId,
+              comment_id: commentId,
+              dm_message: `[FOLLOW GATE] Sent follow check for "${campaign.name}"`,
+              status: 'follow_gate',
+              sent_at: new Date().toISOString()
+            });
+
+            console.log(`✅ Follow gate sent and flow state saved for ${commenterId}`);
+          } catch (gateErr) {
+            console.error(`❌ Failed to send follow gate to ${commenterId}:`, gateErr.message);
+          }
           break;
         }
       }
