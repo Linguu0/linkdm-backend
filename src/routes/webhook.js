@@ -61,6 +61,10 @@ router.post('/instagram', async (req, res) => {
         for (const msg of entry.messaging) {
           const senderId = msg.sender?.id;
           const text = msg.message?.text || msg.postback?.title || msg.message?.quick_reply?.payload || msg.postback?.payload;
+          const isPostback = !!msg.postback;
+          const postbackPayload = msg.postback?.payload;
+
+          console.log(`📨 DM event — senderId=${senderId}, text="${text}", isPostback=${isPostback}, payload=${postbackPayload || 'none'}`);
 
           if (!senderId || !text) continue;
 
@@ -466,6 +470,9 @@ router.post('/instagram', async (req, res) => {
           const campaignToken = campaign.access_token || accessToken;
 
           // --- Send Once Per User Check (prevents spamming same user) ---
+          // IMPORTANT: Exclude 'follow_gate' status — a follow gate is NOT a delivered DM.
+          // Without this exclusion, users who received the follow gate would be
+          // permanently blocked from ever getting the actual content.
           let shouldSkip = false;
           if (campaign.send_once_per_user !== false) {
             const { data: existingLogs, error: logError } = await supabase
@@ -474,6 +481,7 @@ router.post('/instagram', async (req, res) => {
               .eq('campaign_id', campaign.id)
               .eq('commenter_id', commenterId)
               .neq('status', 'debug')
+              .neq('status', 'follow_gate')
               .limit(1);
 
             if (logError) {
