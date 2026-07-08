@@ -207,10 +207,14 @@ router.post('/instagram', async (req, res) => {
                   });
                 }
 
-                // Clean up flow state
-                await supabase.from('user_flow_states').delete()
-                  .eq('commenter_id', senderId)
-                  .eq('campaign_id', campaign.id);
+                // Clean up flow state — but NOT for flow_builder!
+                // advanceFlow manages its own state (it just saved step 1 waiting for reply).
+                // Deleting it here would wipe out the state advanceFlow just created.
+                if (campaign.dm_type !== 'flow_builder') {
+                  await supabase.from('user_flow_states').delete()
+                    .eq('commenter_id', senderId)
+                    .eq('campaign_id', campaign.id);
+                }
 
                 await supabase.from('dm_logs').insert({
                   campaign_id: campaign.id,
