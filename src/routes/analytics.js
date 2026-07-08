@@ -76,7 +76,16 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/debug-logs', async (req, res) => { const { data } = await supabase.from('dm_logs').select('*').order('sent_at', { ascending: false }).limit(10); res.json(data); });
+router.get('/debug-logs', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  const { data } = await supabase.from('dm_logs').select('*').order('sent_at', { ascending: false }).limit(limit);
+  res.json(data);
+});
+
+router.get('/debug-flow-states', async (req, res) => {
+  const { data } = await supabase.from('user_flow_states').select('*, campaigns(name, dm_type)').order('last_updated_at', { ascending: false }).limit(20);
+  res.json(data);
+});
 
 router.get('/debug-campaigns', async (req, res) => {
   try {
