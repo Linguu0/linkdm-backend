@@ -121,14 +121,13 @@ router.post('/instagram', async (req, res) => {
             if (currentIndex === -1) {
               console.log(`📨 Standard DM reply received from ${senderId} for "${campaign.name}" — checking follower status`);
 
-              // Check follower status (STRICT — only confirmed 'yes' passes)
+              // Check follower status — only block definitively confirmed non-followers
               console.log(`🔍 [StdDM] Checking follower for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
               const followerResult = await isFollower(campaignToken, senderId);
               console.log(`🔍 [StdDM] Result: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
-              if (followerResult.status !== 'yes') {
-                console.log(`🚫 User ${senderId} NOT confirmed follower (status: ${followerResult.status}) — SKIPPING DM (Follow gate prompt removed for page health)`);
-                // Keep flow state alive — user can retry after following, but we don't send the prompt
+              if (followerResult.status === 'no') {
+                console.log(`🚫 User ${senderId} confirmed NOT a follower — SKIPPING DM`);
                 break;
               }
 
@@ -158,11 +157,30 @@ router.post('/instagram', async (req, res) => {
               console.log(`🔒 Follow gate response from ${senderId} for "${campaign.name}" — checking follower status...`);
 
               const followerResult = await isFollower(campaignToken, senderId);
-              console.log(`🔍 Follow gate result for ${senderId}: status="${followerResult.status}"`);
+              console.log(`🔍 Follow gate result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
-              if (followerResult.status === 'yes') {
-                // ✅ CONFIRMED follower — send actual content
-                console.log(`✅ CONFIRMED follower — sending content for "${campaign.name}"`);
+              if (followerResult.status === 'no') {
+                // ❌ DEFINITIVELY not a follower — resend follow gate
+                console.log(`❌ ${senderId} confirmed NOT a follower — resending follow gate`);
+                const profileUsername = await getProfileUsername(campaignToken);
+                const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
+
+                try {
+                  await sendFollowGateMessage(campaignToken, senderId, null, profileUrl);
+                } catch (gateErr) {
+                  console.error(`❌ Failed to resend follow gate:`, gateErr.message);
+                }
+
+                // Update timestamp to keep state fresh
+                await supabase.from('user_flow_states')
+                  .update({ last_updated_at: new Date().toISOString() })
+                  .eq('commenter_id', senderId)
+                  .eq('campaign_id', campaign.id);
+              } else {
+                // ✅ Follower confirmed ('yes') OR API can't verify ('unknown'/Error 230)
+                // In both cases, send the content. The user clicked "I'm following",
+                // and the API error shouldn't trap them in an infinite loop.
+                console.log(`✅ Sending content for "${campaign.name}" (follower status: ${followerResult.status})`);
 
                 const btnData = typeof campaign.button_template_data === 'string' ? JSON.parse(campaign.button_template_data) : campaign.button_template_data;
                 const qrData = typeof campaign.quick_replies_data === 'string' ? JSON.parse(campaign.quick_replies_data) : campaign.quick_replies_data;
@@ -197,27 +215,10 @@ router.post('/instagram', async (req, res) => {
                 await supabase.from('dm_logs').insert({
                   campaign_id: campaign.id,
                   commenter_id: senderId,
-                  dm_message: `[FOLLOW GATE PASSED] Content sent for "${campaign.name}"`,
+                  dm_message: `[FOLLOW GATE PASSED] Content sent for "${campaign.name}" (status: ${followerResult.status})`,
                   status: 'sent',
                   sent_at: new Date().toISOString()
                 });
-              } else {
-                // ❌ NOT a follower — resend follow gate
-                console.log(`❌ ${senderId} still NOT a follower — resending follow gate`);
-                const profileUsername = await getProfileUsername(campaignToken);
-                const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
-
-                try {
-                  await sendFollowGateMessage(campaignToken, senderId, null, profileUrl);
-                } catch (gateErr) {
-                  console.error(`❌ Failed to resend follow gate:`, gateErr.message);
-                }
-
-                // Update timestamp to keep state fresh
-                await supabase.from('user_flow_states')
-                  .update({ last_updated_at: new Date().toISOString() })
-                  .eq('commenter_id', senderId)
-                  .eq('campaign_id', campaign.id);
               }
               break;
             }
@@ -276,21 +277,20 @@ router.post('/instagram', async (req, res) => {
               continue;
             }
 
-            // --- Follower Check (STRICT — only confirmed followers get content) ---
+            // --- Follower Check — only block definitively confirmed non-followers ---
             {
               console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
               const followerResult = await isFollower(campaignToken, senderId);
               console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
               
-              if (followerResult.status !== 'yes') {
-                // STRICT: Both 'no' and 'unknown' are blocked
-                // Non-follower → SKIPPING DM (Follow gate prompt removed for page health)
-                console.log(`🚫 User ${senderId} is NOT a confirmed follower (status: ${followerResult.status}) — SKIPPING DM`);
-                // Keep flow state alive so they can retry later, but we don't send the follow prompt
+              if (followerResult.status === 'no') {
+                // Only block if API definitively says NOT a follower
+                console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
                 break;
               }
               
-              console.log(`✅ User ${senderId} is CONFIRMED follower — advancing flow`);
+              // 'yes' or 'unknown' (API error) — proceed with content delivery
+              console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
             }
 
             // --- Advance the flow ---
