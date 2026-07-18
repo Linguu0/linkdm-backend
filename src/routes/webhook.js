@@ -433,8 +433,11 @@ router.post('/instagram', async (req, res) => {
         for (const campaign of campaigns) {
           // --- Target Post Filter ---
           if (campaign.target_type === 'specific_post' && campaign.target_media_id) {
+            // Instagram webhook sends 17-char media IDs, but dashboard may store
+            // 15-char or 17-char IDs. Use bidirectional includes() to match either way.
             const isTargetMatch = mediaId === campaign.target_media_id ||
-                                 (campaign.target_media_id.length < 15 && mediaId.includes(campaign.target_media_id));
+                                 mediaId.includes(campaign.target_media_id) ||
+                                 campaign.target_media_id.includes(mediaId);
 
             if (!isTargetMatch) {
               console.log(`⏭️ Skipping "${campaign.name}" — target media mismatch (${campaign.target_media_id} != ${mediaId})`);
@@ -533,11 +536,22 @@ router.post('/instagram', async (req, res) => {
           const followerResult = await isFollower(campaignToken, commenterId);
           console.log(`🔍 Follower result for ${commenterId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
-          // Auto-reply to comment
+          // Auto-reply to comment (RANDOMIZED to avoid spam detection — ManyChat best practice)
           if (campaign.auto_comment_reply !== false && commentId) {
+            const replyVariations = [
+              'Check your DMs! 📩',
+              'Sent you a message! 💬',
+              'DM sent! Check your inbox 📬',
+              'Just sent it to your DMs! ✅',
+              'Check your messages! 📨',
+              'Sent! Look in your DMs 💌',
+              'DM bhej diya! Check karo 📩',
+              'Message sent! ✨'
+            ];
+            const randomReply = replyVariations[Math.floor(Math.random() * replyVariations.length)];
             try {
-              await replyToComment(campaignToken, commentId, 'Check your DMs! 📩');
-              console.log(`✅ Auto-replied to comment ${commentId}`);
+              await replyToComment(campaignToken, commentId, randomReply);
+              console.log(`✅ Auto-replied to comment ${commentId}: "${randomReply}"`);
             } catch (replyErr) {
               console.warn(`⚠️ Failed to auto-reply to comment ${commentId}:`, replyErr.message);
             }
