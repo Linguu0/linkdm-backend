@@ -7,6 +7,36 @@ const { advanceFlow } = require('../services/flowRunner');
 const { replyToComment, isFollower, getProfileUsername, sendFollowGateMessage } = require('../services/instagram');
 
 // ---------------------------------------------------------------------------
+// Rate Limiter — Prevents viral post overload (ManyChat caps at ~12/min)
+// Sliding window: max 12 triggers per 60 seconds per campaign
+// ---------------------------------------------------------------------------
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60 seconds
+const RATE_LIMIT_MAX = 12;              // max triggers per window
+const rateLimitMap = new Map();         // campaignId -> [timestamps]
+
+function isRateLimited(campaignId) {
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+
+  if (!rateLimitMap.has(campaignId)) {
+    rateLimitMap.set(campaignId, []);
+  }
+
+  const timestamps = rateLimitMap.get(campaignId);
+  // Prune old entries
+  while (timestamps.length > 0 && timestamps[0] < windowStart) {
+    timestamps.shift();
+  }
+
+  if (timestamps.length >= RATE_LIMIT_MAX) {
+    return true; // Rate limited
+  }
+
+  timestamps.push(now);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // GET /webhook/instagram — Meta webhook verification (challenge handshake)
 // ---------------------------------------------------------------------------
 router.get('/instagram', (req, res) => {
@@ -456,6 +486,13 @@ router.post('/instagram', async (req, res) => {
           console.log(`🔎 "${commentText}" vs keyword "${campaign.keyword}" for "${campaign.name}": ${isMatch ? '✅ MATCH' : '❌ NO MATCH'}`);
 
           if (!isMatch) continue;
+
+          // --- Rate Limiter (ManyChat-style: ~12 triggers/min per campaign) ---
+          if (isRateLimited(campaign.id)) {
+            console.log(`⏳ Rate limited for "${campaign.name}" — queueing with extra delay`);
+            // Don't skip — add a longer delay instead so no user is dropped
+            await new Promise(resolve => setTimeout(resolve, 5000 + Math.floor(Math.random() * 5000)));
+          }
 
           // --- Exclude Keywords Filter (BUG 7 FIX) ---
           if (campaign.exclude_keywords && campaign.exclude_keywords.length > 0) {
