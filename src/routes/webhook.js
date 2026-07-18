@@ -37,6 +37,14 @@ function isRateLimited(campaignId) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /webhook/version — Confirm deployed code version
+// ---------------------------------------------------------------------------
+const DEPLOY_VERSION = 'v3.1-media-id-fix-20250718';
+router.get('/version', (req, res) => {
+  res.json({ version: DEPLOY_VERSION, deployed_at: new Date().toISOString() });
+});
+
+// ---------------------------------------------------------------------------
 // GET /webhook/instagram — Meta webhook verification (challenge handshake)
 // ---------------------------------------------------------------------------
 router.get('/instagram', (req, res) => {
@@ -654,6 +662,15 @@ router.post('/instagram', async (req, res) => {
               console.log(`✅ Follow gate sent and flow state saved for ${commenterId}`);
             } catch (gateErr) {
               console.error(`❌ Failed to send follow gate to ${commenterId}:`, gateErr.message);
+              // LOG FAILURE to dm_logs so we can see it in analytics
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: commenterId,
+                comment_id: commentId,
+                dm_message: `[FOLLOW GATE FAILED] ${gateErr.message}`,
+                status: 'failed',
+                sent_at: new Date().toISOString()
+              }).catch(() => {}); // Don't let logging failure crash the handler
             }
           }
           break;
