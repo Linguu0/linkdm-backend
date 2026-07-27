@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
 const campaignRoutes = require('./routes/campaigns');
 const analyticsRoutes = require('./routes/analytics');
+const followerAuditRoutes = require('./routes/followerAudit');
 const { processPendingDelays } = require('./services/flowRunner');
 const { ensureTable: ensureRetryTable, processPendingFollowerChecks } = require('./services/followerRetryWorker');
 const supabase = require('./db/supabase');
@@ -115,6 +116,7 @@ app.use('/webhook', webhookRoutes);
 app.use('/campaigns', campaignRoutes);
 app.use('/posts', campaignRoutes);
 app.use('/analytics', analyticsRoutes);
+app.use('/follower-audit', followerAuditRoutes);
 
 // Health check
 app.get('/', (_req, res) => {
