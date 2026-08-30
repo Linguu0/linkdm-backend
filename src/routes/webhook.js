@@ -98,24 +98,48 @@ router.post('/instagram', async (req, res) => {
       if (entry.messaging) {
         for (const msg of entry.messaging) {
           const senderId = msg.sender?.id;
+          const isEcho = msg.message?.is_echo;
           const text = msg.message?.text || msg.postback?.title || msg.message?.quick_reply?.payload || msg.postback?.payload;
           const isPostback = !!msg.postback;
+          const isQuickReply = !!msg.message?.quick_reply;
           const postbackPayload = msg.postback?.payload;
 
-          console.log(`📨 DM event — senderId=${senderId}, text="${text}", isPostback=${isPostback}, payload=${postbackPayload || 'none'}`);
+          // === TRACE 1: Log every DM event ===
+          await supabase.from('dm_logs').insert({
+            campaign_id: null,
+            commenter_id: senderId || 'unknown',
+            dm_message: `[TRACE-1] DM event: sender=${senderId}, text="${(text||'').substring(0,50)}", isEcho=${isEcho}, isPostback=${isPostback}, isQuickReply=${isQuickReply}`,
+            status: 'debug',
+            sent_at: new Date().toISOString()
+          }).then(() => {}).catch(() => {});
+
+          console.log(`📨 DM event — senderId=${senderId}, text="${text}", isEcho=${isEcho}, isPostback=${isPostback}, isQuickReply=${isQuickReply}, payload=${postbackPayload || 'none'}`);
+
+          // Skip echo messages (our own outbound messages bouncing back)
+          if (isEcho) {
+            console.log(`⏭️ Skipping echo message`);
+            continue;
+          }
 
           if (!senderId || !text) continue;
 
           console.log(`💬 Received DM from ${senderId}: "${text}"`);
 
           // Find ALL active flow sessions for this user
-          // Order by most recently updated — the user is most likely replying
-          // to the campaign they interacted with last
           const { data: states, error: stateError } = await supabase
             .from('user_flow_states')
             .select('*, campaigns(*)')
             .eq('commenter_id', senderId)
             .order('last_updated_at', { ascending: false });
+
+          // === TRACE 2: Log flow state lookup result ===
+          await supabase.from('dm_logs').insert({
+            campaign_id: null,
+            commenter_id: senderId,
+            dm_message: `[TRACE-2] Flow states found: ${states?.length || 0}, error: ${stateError?.message || 'none'}`,
+            status: 'debug',
+            sent_at: new Date().toISOString()
+          }).then(() => {}).catch(() => {});
 
           if (stateError || !states || states.length === 0) {
             console.log(`ℹ️ No active flow state for ${senderId}`);
@@ -152,24 +176,25 @@ router.post('/instagram', async (req, res) => {
             const currentIndex = state.current_step_index;
             const campaignToken = campaign.access_token || process.env.ACCESS_TOKEN;
 
+            // === TRACE 3: Log which campaign/step we're processing ===
+            await supabase.from('dm_logs').insert({
+              campaign_id: campaign.id,
+              commenter_id: senderId,
+              dm_message: `[TRACE-3] Processing: campaign="${campaign.name}", step=${currentIndex}, dm_type=${campaign.dm_type}`,
+              status: 'debug',
+              sent_at: new Date().toISOString()
+            }).then(() => {}).catch(() => {});
+
             // ═══ SPECIAL: Standard DM waiting for reply (current_step_index === -1) ═══
-            // This means the campaign is a standard DM (not flow_builder) that was
-            // converted to a 2-step flow. The teaser was sent, user replied → now
-            // check follower status and send the actual content.
             if (currentIndex === -1) {
               console.log(`📨 Standard DM reply received from ${senderId} for "${campaign.name}" — checking follower status`);
-
-              // Check follower status — only block definitively confirmed non-followers
-              console.log(`🔍 [StdDM] Checking follower for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
               const followerResult = await isFollower(campaignToken, senderId);
-              console.log(`🔍 [StdDM] Result: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
               if (followerResult.status === 'no') {
                 console.log(`🚫 User ${senderId} confirmed NOT a follower — SKIPPING DM`);
                 break;
               }
 
-              // ONLY confirmed followers reach here
               console.log(`✅ CONFIRMED follower — sending actual content for "${campaign.name}"`);
               await enqueueDM({
                 commenterId: senderId,
@@ -177,13 +202,12 @@ router.post('/instagram', async (req, res) => {
                 type: campaign.dm_type || 'text_message',
                 campaignId: campaign.id,
                 accessToken: campaignToken,
-                commentId: null,  // Use recipient.id, not comment_id (window is open)
+                commentId: null,
                 autoReply: false,
                 buttonTemplateData: campaign.button_template_data,
                 quickRepliesData: campaign.quick_replies_data
               });
 
-              // Clean up flow state — content delivered
               await supabase.from('user_flow_states').delete()
                 .eq('commenter_id', senderId)
                 .eq('campaign_id', campaign.id);
@@ -198,7 +222,6 @@ router.post('/instagram', async (req, res) => {
               console.log(`🔍 Follow gate result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
 
               if (followerResult.status === 'no') {
-                // ❌ DEFINITIVELY not a follower — resend follow gate
                 console.log(`❌ ${senderId} confirmed NOT a follower — resending follow gate`);
                 const profileUsername = await getProfileUsername(campaignToken);
                 const profileUrl = profileUsername ? `https://www.instagram.com/${profileUsername}` : 'https://www.instagram.com/';
@@ -209,15 +232,11 @@ router.post('/instagram', async (req, res) => {
                   console.error(`❌ Failed to resend follow gate:`, gateErr.message);
                 }
 
-                // Update timestamp to keep state fresh
                 await supabase.from('user_flow_states')
                   .update({ last_updated_at: new Date().toISOString() })
                   .eq('commenter_id', senderId)
                   .eq('campaign_id', campaign.id);
               } else {
-                // ✅ Follower confirmed ('yes') OR API can't verify ('unknown'/Error 230)
-                // In both cases, send the content. The user clicked "I'm following",
-                // and the API error shouldn't trap them in an infinite loop.
                 console.log(`✅ Sending content for "${campaign.name}" (follower status: ${followerResult.status})`);
 
                 const btnData = typeof campaign.button_template_data === 'string' ? JSON.parse(campaign.button_template_data) : campaign.button_template_data;
@@ -245,9 +264,6 @@ router.post('/instagram', async (req, res) => {
                   });
                 }
 
-                // Clean up flow state — but NOT for flow_builder!
-                // advanceFlow manages its own state (it just saved step 1 waiting for reply).
-                // Deleting it here would wipe out the state advanceFlow just created.
                 if (campaign.dm_type !== 'flow_builder') {
                   await supabase.from('user_flow_states').delete()
                     .eq('commenter_id', senderId)
@@ -271,14 +287,12 @@ router.post('/instagram', async (req, res) => {
 
             const currentStep = flow.steps[currentIndex];
 
-            // If flow is past the end or no step exists, clean up
             if (!currentStep) {
               await supabase.from('user_flow_states').delete()
                 .eq('commenter_id', senderId)
                 .eq('campaign_id', campaign.id);
               continue;
             }
-
 
             // --- CONDITION STEP: check keyword match ---
             if (currentStep.type === 'condition') {
@@ -287,10 +301,16 @@ router.post('/instagram', async (req, res) => {
               const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
               const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
 
+              // === TRACE 4: Log condition check result ===
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: senderId,
+                dm_message: `[TRACE-4] Condition check: keywords=[${keywords.join(',')}], userText="${text.substring(0,50)}", isMatch=${isMatch}`,
+                status: 'debug',
+                sent_at: new Date().toISOString()
+              }).then(() => {}).catch(() => {});
+
               if (!isMatch) {
-                // Keywords didn't match — BUT if user was previously follow-gated,
-                // they might be replying "Done", "kar diya", "Following" etc.
-                // In that case, accept ANY reply and just re-check follower status.
                 const { data: gateLog } = await supabase
                   .from('dm_logs')
                   .select('id')
@@ -301,62 +321,66 @@ router.post('/instagram', async (req, res) => {
 
                 if (gateLog && gateLog.length > 0) {
                   console.log(`🔓 User ${senderId} was previously follow-gated — accepting ANY reply for "${campaign.name}"`);
-                  // Fall through to follower check below
                 } else {
-                  continue; // Genuine keyword mismatch, skip
+                  continue;
                 }
               } else {
                 console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
               }
             }
-            // --- NON-CONDITION STEP: any reply should try to advance ---
-            // This handles the case where user was gated (follow prompt sent),
-            // user followed and replied again. The state still points to the 
-            // same step, so we just need to re-check follow status and advance.
             else if (currentStep.type === 'message' || currentStep.type === 'delay') {
               console.log(`🔄 User replied while flow paused at ${currentStep.type} step ${currentIndex} for "${campaign.name}" — re-checking follow gate`);
             } else {
               continue;
             }
 
-            // --- Follower Check — only for follow-gated users (step -2) ---
-            // If user is at step >= 1, they already PASSED the follower check
-            // at comment time (Section B). Don't re-check — API can be flaky.
+            // --- Follower Check ---
             {
-              // Only re-verify follower status if coming from follow gate (step -2)
-              // or if step is 0 (somehow). If step >= 1, user already proved they're a follower.
-              if (currentIndex <= 0 || state.current_step_index === -2) {
-                console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
-                const followerResult = await isFollower(campaignToken, senderId);
-                console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
-                
-                if (followerResult.status === 'no') {
-                  console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
-                  // Log to DB so we can see it in analytics
-                  await supabase.from('dm_logs').insert({
-                    campaign_id: campaign.id,
-                    commenter_id: senderId,
-                    dm_message: `[FOLLOWER CHECK BLOCKED] User not following — content withheld for "${campaign.name}"`,
-                    status: 'failed',
-                    sent_at: new Date().toISOString()
-                  });
-                  break;
-                }
-                
-                console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
-              } else {
-                console.log(`✅ User ${senderId} already at step ${currentIndex} — skipping re-verification (already proved follower at comment time)`);
+              console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
+              const followerResult = await isFollower(campaignToken, senderId);
+              console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
+              
+              // === TRACE 5: Log follower check result ===
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: senderId,
+                dm_message: `[TRACE-5] Follower check: status=${followerResult.status}, reason=${followerResult.reason || 'none'}`,
+                status: 'debug',
+                sent_at: new Date().toISOString()
+              }).then(() => {}).catch(() => {});
+
+              if (followerResult.status === 'no') {
+                console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
+                await supabase.from('dm_logs').insert({
+                  campaign_id: campaign.id,
+                  commenter_id: senderId,
+                  dm_message: `[BLOCKED] Follower check returned NO — content withheld for "${campaign.name}"`,
+                  status: 'failed',
+                  sent_at: new Date().toISOString()
+                });
+                break;
               }
+              
+              console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
             }
 
             // --- Advance the flow ---
+            // === TRACE 6: About to advance ===
+            await supabase.from('dm_logs').insert({
+              campaign_id: campaign.id,
+              commenter_id: senderId,
+              dm_message: `[TRACE-6] Advancing flow: from step ${currentIndex} to ${currentStep.type === 'condition' ? currentIndex + 1 : currentIndex}, isUserReply=true`,
+              status: 'debug',
+              sent_at: new Date().toISOString()
+            }).then(() => {}).catch(() => {});
+
             const nextStep = currentStep.type === 'condition' ? currentIndex + 1 : currentIndex;
             await advanceFlow({
               commenterId: senderId,
               campaignId: campaign.id,
               accessToken: campaignToken,
               stepIndex: nextStep,
-              isUserReply: true  // User replied → 24h window is open
+              isUserReply: true
             });
             break;
           }
