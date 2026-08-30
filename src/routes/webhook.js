@@ -104,16 +104,7 @@ router.post('/instagram', async (req, res) => {
           const isQuickReply = !!msg.message?.quick_reply;
           const postbackPayload = msg.postback?.payload;
 
-          // === TRACE 1: Log every DM event ===
-          await supabase.from('dm_logs').insert({
-            campaign_id: null,
-            commenter_id: senderId || 'unknown',
-            dm_message: `[TRACE-1] DM event: sender=${senderId}, text="${(text||'').substring(0,50)}", isEcho=${isEcho}, isPostback=${isPostback}, isQuickReply=${isQuickReply}`,
-            status: 'debug',
-            sent_at: new Date().toISOString()
-          }).then(() => {}).catch(() => {});
-
-          console.log(`📨 DM event — senderId=${senderId}, text="${text}", isEcho=${isEcho}, isPostback=${isPostback}, isQuickReply=${isQuickReply}, payload=${postbackPayload || 'none'}`);
+          console.log(`📨 DM event — sender=${senderId}, text="${text}", echo=${isEcho}, postback=${isPostback}, quickReply=${isQuickReply}`);
 
           // Skip echo messages (our own outbound messages bouncing back)
           if (isEcho) {
@@ -132,14 +123,7 @@ router.post('/instagram', async (req, res) => {
             .eq('commenter_id', senderId)
             .order('last_updated_at', { ascending: false });
 
-          // === TRACE 2: Log flow state lookup result ===
-          await supabase.from('dm_logs').insert({
-            campaign_id: null,
-            commenter_id: senderId,
-            dm_message: `[TRACE-2] Flow states found: ${states?.length || 0}, error: ${stateError?.message || 'none'}`,
-            status: 'debug',
-            sent_at: new Date().toISOString()
-          }).then(() => {}).catch(() => {});
+          console.log(`📋 Flow states found: ${states?.length || 0}, error: ${stateError?.message || 'none'}`);
 
           if (stateError || !states || states.length === 0) {
             console.log(`ℹ️ No active flow state for ${senderId}`);
@@ -176,14 +160,7 @@ router.post('/instagram', async (req, res) => {
             const currentIndex = state.current_step_index;
             const campaignToken = campaign.access_token || process.env.ACCESS_TOKEN;
 
-            // === TRACE 3: Log which campaign/step we're processing ===
-            await supabase.from('dm_logs').insert({
-              campaign_id: campaign.id,
-              commenter_id: senderId,
-              dm_message: `[TRACE-3] Processing: campaign="${campaign.name}", step=${currentIndex}, dm_type=${campaign.dm_type}`,
-              status: 'debug',
-              sent_at: new Date().toISOString()
-            }).then(() => {}).catch(() => {});
+            console.log(`🎯 Processing: campaign="${campaign.name}", step=${currentIndex}, dm_type=${campaign.dm_type}`);
 
             // ═══ SPECIAL: Standard DM waiting for reply (current_step_index === -1) ═══
             if (currentIndex === -1) {
@@ -282,6 +259,7 @@ router.post('/instagram', async (req, res) => {
             }
 
             // ═══ Flow Builder campaigns ═══
+            try {
             const flow = typeof campaign.flow_data === 'string' ? JSON.parse(campaign.flow_data) : campaign.flow_data;
             if (!flow || !flow.steps) continue;
 
@@ -301,14 +279,7 @@ router.post('/instagram', async (req, res) => {
               const keywords = (currentStep.matchKeywords || '').split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
               const isMatch = keywords.length === 0 || keywords.some(k => text.toLowerCase().includes(k));
 
-              // === TRACE 4: Log condition check result ===
-              await supabase.from('dm_logs').insert({
-                campaign_id: campaign.id,
-                commenter_id: senderId,
-                dm_message: `[TRACE-4] Condition check: keywords=[${keywords.join(',')}], userText="${text.substring(0,50)}", isMatch=${isMatch}`,
-                status: 'debug',
-                sent_at: new Date().toISOString()
-              }).then(() => {}).catch(() => {});
+              console.log(`🔎 CONDITION RESULT: keywords=[${keywords.join(',')}], userText="${text}", isMatch=${isMatch}`);
 
               if (!isMatch) {
                 const { data: gateLog } = await supabase
@@ -322,59 +293,42 @@ router.post('/instagram', async (req, res) => {
                 if (gateLog && gateLog.length > 0) {
                   console.log(`🔓 User ${senderId} was previously follow-gated — accepting ANY reply for "${campaign.name}"`);
                 } else {
+                  console.log(`❌ CONDITION MISMATCH — skipping campaign "${campaign.name}"`);
                   continue;
                 }
               } else {
-                console.log(`✅ Condition match for campaign "${campaign.name}"! Checking follower status...`);
+                console.log(`✅ Condition match for campaign "${campaign.name}"!`);
               }
             }
             else if (currentStep.type === 'message' || currentStep.type === 'delay') {
-              console.log(`🔄 User replied while flow paused at ${currentStep.type} step ${currentIndex} for "${campaign.name}" — re-checking follow gate`);
+              console.log(`🔄 User replied while flow paused at ${currentStep.type} step ${currentIndex} for "${campaign.name}"`);
             } else {
               continue;
             }
 
             // --- Follower Check ---
-            {
-              console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
-              const followerResult = await isFollower(campaignToken, senderId);
-              console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
-              
-              // === TRACE 5: Log follower check result ===
+            console.log(`🔍 FOLLOWER CHECK START for ${senderId}`);
+            const followerResult = await isFollower(campaignToken, senderId);
+            console.log(`🔍 FOLLOWER CHECK DONE: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
+
+            if (followerResult.status === 'no') {
+              console.log(`🚫 BLOCKED — User ${senderId} is NOT a follower`);
               await supabase.from('dm_logs').insert({
                 campaign_id: campaign.id,
                 commenter_id: senderId,
-                dm_message: `[TRACE-5] Follower check: status=${followerResult.status}, reason=${followerResult.reason || 'none'}`,
-                status: 'debug',
+                dm_message: `[BLOCKED] Not following — content withheld for "${campaign.name}"`,
+                status: 'failed',
                 sent_at: new Date().toISOString()
-              }).then(() => {}).catch(() => {});
-
-              if (followerResult.status === 'no') {
-                console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
-                await supabase.from('dm_logs').insert({
-                  campaign_id: campaign.id,
-                  commenter_id: senderId,
-                  dm_message: `[BLOCKED] Follower check returned NO — content withheld for "${campaign.name}"`,
-                  status: 'failed',
-                  sent_at: new Date().toISOString()
-                });
-                break;
-              }
-              
-              console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
+              });
+              break;
             }
 
-            // --- Advance the flow ---
-            // === TRACE 6: About to advance ===
-            await supabase.from('dm_logs').insert({
-              campaign_id: campaign.id,
-              commenter_id: senderId,
-              dm_message: `[TRACE-6] Advancing flow: from step ${currentIndex} to ${currentStep.type === 'condition' ? currentIndex + 1 : currentIndex}, isUserReply=true`,
-              status: 'debug',
-              sent_at: new Date().toISOString()
-            }).then(() => {}).catch(() => {});
+            console.log(`✅ FOLLOWER OK — proceeding to advance flow`);
 
+            // --- Advance the flow ---
             const nextStep = currentStep.type === 'condition' ? currentIndex + 1 : currentIndex;
+            console.log(`🚀 ADVANCING FLOW: from step ${currentIndex} to step ${nextStep}`);
+
             await advanceFlow({
               commenterId: senderId,
               campaignId: campaign.id,
@@ -382,6 +336,20 @@ router.post('/instagram', async (req, res) => {
               stepIndex: nextStep,
               isUserReply: true
             });
+
+            console.log(`✅ FLOW ADVANCED SUCCESSFULLY`);
+            } catch (flowErr) {
+              console.error(`❌ FLOW BUILDER CRASH: ${flowErr.message}`);
+              console.error(flowErr.stack);
+              // Log crash to DB
+              await supabase.from('dm_logs').insert({
+                campaign_id: campaign.id,
+                commenter_id: senderId,
+                dm_message: `[CRASH] Flow builder error: ${flowErr.message}`,
+                status: 'failed',
+                sent_at: new Date().toISOString()
+              }).catch(() => {});
+            }
             break;
           }
         }
