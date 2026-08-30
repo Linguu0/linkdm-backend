@@ -319,20 +319,34 @@ router.post('/instagram', async (req, res) => {
               continue;
             }
 
-            // --- Follower Check — only block definitively confirmed non-followers ---
+            // --- Follower Check — only for follow-gated users (step -2) ---
+            // If user is at step >= 1, they already PASSED the follower check
+            // at comment time (Section B). Don't re-check — API can be flaky.
             {
-              console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
-              const followerResult = await isFollower(campaignToken, senderId);
-              console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
-              
-              if (followerResult.status === 'no') {
-                // Only block if API definitively says NOT a follower
-                console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
-                break;
+              // Only re-verify follower status if coming from follow gate (step -2)
+              // or if step is 0 (somehow). If step >= 1, user already proved they're a follower.
+              if (currentIndex <= 0 || state.current_step_index === -2) {
+                console.log(`🔍 Checking follower status for ${senderId} with token: ${campaignToken ? campaignToken.substring(0, 10) + '...' : 'MISSING!'}`);
+                const followerResult = await isFollower(campaignToken, senderId);
+                console.log(`🔍 Follower check result for ${senderId}: status="${followerResult.status}", reason="${followerResult.reason || 'none'}"`);
+                
+                if (followerResult.status === 'no') {
+                  console.log(`🚫 User ${senderId} is confirmed NOT a follower — SKIPPING DM`);
+                  // Log to DB so we can see it in analytics
+                  await supabase.from('dm_logs').insert({
+                    campaign_id: campaign.id,
+                    commenter_id: senderId,
+                    dm_message: `[FOLLOWER CHECK BLOCKED] User not following — content withheld for "${campaign.name}"`,
+                    status: 'failed',
+                    sent_at: new Date().toISOString()
+                  });
+                  break;
+                }
+                
+                console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
+              } else {
+                console.log(`✅ User ${senderId} already at step ${currentIndex} — skipping re-verification (already proved follower at comment time)`);
               }
-              
-              // 'yes' or 'unknown' (API error) — proceed with content delivery
-              console.log(`✅ User ${senderId} — proceeding with flow (follower status: ${followerResult.status})`);
             }
 
             // --- Advance the flow ---
